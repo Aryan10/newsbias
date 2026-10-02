@@ -1,0 +1,31 @@
+[dataset]
+adapter = "newsbias.datasets.all_sides:AllSidesDataset"
+
+[dataset.parameters]
+name = "upasanachatterjee/AllSides-random-split"
+revision = "4d33d17c5591ad5d4e37ffd6238d7ead8590a70e"
+text_column = "content"
+processed_cache_dir = "data/processed"
+download_cache_dir = "data/cache"
+split_seed = 42
+train_fraction = 0.7
+validation_fraction = 0.1
+test_fraction = 0.2
+
+[model]
+adapter = "newsbias.models.huggingface:HuggingFaceSequenceClassifier"
+
+[model.parameters]
+model_name = "bucketresearch/politicalBiasBERT"
+revision = "5e5aa509b3f0fe76a6cf102f56490bd82ca04e2f"
+max_length = 512
+stride = 64
+max_chunks = 16
+
+[training]
+enabled = false
+save_model = false
+
+[evaluation]
+splits = ["validation"]
+batch_size = 32
