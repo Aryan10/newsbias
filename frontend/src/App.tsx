@@ -887,17 +887,14 @@ export default function App() {
                     <CheckCircle2 className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
                     <h3 className="text-lg font-bold text-slate-900 dark:text-slate-100">Neutral AP-Style Revision</h3>
                   </div>
-                  <span className="text-xs px-2.5 py-0.5 rounded-full font-semibold border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300">
-                    100% Fact-Preserving
-                  </span>
                 </div>
 
-                <div className="p-4 rounded-xl bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900/40 font-serif text-base leading-relaxed text-slate-900 dark:text-emerald-100">
+                <div className="p-4 rounded-xl bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900/40 font-serif text-base leading-relaxed whitespace-pre-wrap text-slate-900 dark:text-emerald-100">
                   {rewrite.rewritten_text}
                 </div>
 
                 {rewrite.editorial_summary && (
-                  <p className="text-xs text-slate-500 dark:text-slate-400 italic">
+                  <p className="text-xs whitespace-pre-wrap text-slate-500 dark:text-slate-400 italic">
                     Editorial note: {rewrite.editorial_summary}
                   </p>
                 )}
