@@ -1,12 +1,15 @@
 """Unit and integration tests for NewsBias standalone FastAPI web server."""
 
+import importlib
+
 import pytest
 from fastapi.testclient import TestClient
 from newsbias.web.app import app
 
 
 @pytest.fixture
-def client():
+def client(monkeypatch):
+    monkeypatch.setattr(importlib.import_module("newsbias.web.app"), "get_openai_client", lambda: None)
     return TestClient(app)
 
 

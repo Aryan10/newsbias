@@ -304,36 +304,33 @@ class RewriteRequest(BaseModel):
 # In-memory runtime cache for custom or repeated requests
 ANALYSIS_CACHE: dict[str, dict[str, Any]] = {}
 
+
+def get_cache_key(title: str, text: str, *, use_mock: bool = False) -> str:
+    """Identify the complete analysis input, independently of sample selection.
+
+    JSON keeps title/body boundaries unambiguous even when either contains newlines.
+    Only surrounding whitespace is ignored, matching endpoint input normalization.
+    """
+    payload = json.dumps([title.strip(), text.strip(), use_mock], ensure_ascii=False)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 # Load precomputed benchmark samples cache if available
 BENCHMARK_CACHE_FILE = Path(__file__).resolve().parent / "benchmark_cache.json"
 if BENCHMARK_CACHE_FILE.is_file():
     try:
         precomputed = json.loads(BENCHMARK_CACHE_FILE.read_text(encoding="utf-8"))
         if isinstance(precomputed, dict):
-            for k, val in precomputed.items():
-                ANALYSIS_CACHE[k] = val
-                # Also index by normalized text hash and title+text hash
-                if isinstance(val, dict) and "input" in val:
-                    c_title = (val["input"].get("title") or "").strip().lower()
-                    c_text = (val["input"].get("text") or "").strip()
-                    h_full = hashlib.sha256(f"{c_title}\n{c_text}".encode("utf-8")).hexdigest()
-                    h_text = hashlib.sha256(c_text.encode("utf-8")).hexdigest()
-                    ANALYSIS_CACHE[h_full] = val
-                    ANALYSIS_CACHE[h_text] = val
+            for val in precomputed.values():
+                if not isinstance(val, dict) or not isinstance(val.get("input"), dict):
+                    continue
+                c_title = val["input"].get("title") or ""
+                c_text = val["input"].get("text")
+                if isinstance(c_title, str) and isinstance(c_text, str) and c_text.strip():
+                    ANALYSIS_CACHE[get_cache_key(c_title, c_text)] = val
             logger.info("Loaded %d precomputed sample analyses into server cache.", len(precomputed))
     except Exception as e:
         logger.warning("Failed to load precomputed benchmark cache: %s", e)
-
-
-def get_cache_keys(title: str, text: str, sample_id: Optional[str] = None) -> list[str]:
-    keys = []
-    if sample_id:
-        keys.append(sample_id.strip())
-    t_clean = title.strip().lower()
-    b_clean = text.strip()
-    keys.append(hashlib.sha256(f"{t_clean}\n{b_clean}".encode("utf-8")).hexdigest())
-    keys.append(hashlib.sha256(b_clean.encode("utf-8")).hexdigest())
-    return keys
 
 
 # ── API Endpoints ─────────────────────────────────────────────────────────────
@@ -352,15 +349,12 @@ async def analyze_bias_tribunal(req: AnalyzeRequest) -> dict[str, Any]:
 
     title = req.title.strip() if req.title else ""
 
-    # Check cache first (by sample_id, title+text hash, or text hash)
-    cache_keys = get_cache_keys(title, text, req.sample_id)
-    for key in cache_keys:
-        if key in ANALYSIS_CACHE:
-            cached_res = ANALYSIS_CACHE[key]
-            # Ensure input title and text reflect this request
-            result = dict(cached_res)
-            result["input"] = {"title": title, "text": text}
-            return result
+    # A selected sample is only UI metadata; edited content needs its own analysis.
+    cache_key = get_cache_key(title, text, use_mock=req.use_mock)
+    if cache_key in ANALYSIS_CACHE:
+        result = dict(ANALYSIS_CACHE[cache_key])
+        result["input"] = {"title": title, "text": text}
+        return result
 
     # 1 & 2. Specialist Analysis via NewsBias pipeline
     pipeline_res = analyze_article(text, use_mock=req.use_mock)
@@ -482,8 +476,7 @@ async def analyze_bias_tribunal(req: AnalyzeRequest) -> dict[str, Any]:
     }
 
     # Cache the result for subsequent identical requests
-    for key in cache_keys:
-        ANALYSIS_CACHE[key] = result_payload
+    ANALYSIS_CACHE[cache_key] = result_payload
 
     return result_payload
 

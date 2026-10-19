@@ -219,7 +219,8 @@ export default function App() {
   const [samples, setSamples] = useState<SampleItem[]>(DEFAULT_SAMPLES);
   const [title, setTitle] = useState(DEFAULT_SAMPLES[0].title);
   const [text, setText] = useState(DEFAULT_SAMPLES[0].text);
-  const [activeSampleId, setActiveSampleId] = useState(DEFAULT_SAMPLES[0].id);
+  const [activeSampleId, setActiveSampleId] = useState<string | null>(DEFAULT_SAMPLES[0].id);
+  const inputRevision = useRef(0);
 
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isRewriting, setIsRewriting] = useState(false);
@@ -302,26 +303,40 @@ export default function App() {
       .catch(() => {});
   }, []);
 
-  const selectSample = (s: SampleItem) => {
-    setActiveSampleId(s.id);
-    setTitle(s.title);
-    setText(s.text);
+  const invalidateResults = () => {
+    inputRevision.current += 1;
     setAnalysis(null);
     setRewrite(null);
     setError(null);
   };
 
+  const selectSample = (s: SampleItem) => {
+    invalidateResults();
+    setActiveSampleId(s.id);
+    setTitle(s.title);
+    setText(s.text);
+  };
+
+  const editArticle = (field: "title" | "text", value: string) => {
+    invalidateResults();
+    setActiveSampleId(null);
+    if (field === "title") setTitle(value);
+    else setText(value);
+  };
+
   const runAnalysis = async () => {
     if (!text.trim()) return;
+    const revision = inputRevision.current;
     setIsAnalyzing(true);
     setError(null);
+    setAnalysis(null);
     setRewrite(null);
 
     try {
       const res = await fetch("/bias/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title, text, sample_id: activeSampleId }),
+        body: JSON.stringify({ title, text }),
       });
 
       if (!res.ok) {
@@ -330,9 +345,11 @@ export default function App() {
       }
 
       const data = await res.json();
-      setAnalysis(data);
+      if (revision === inputRevision.current) setAnalysis(data);
     } catch (e: any) {
-      setError(e.message || "Failed to analyze article bias.");
+      if (revision === inputRevision.current) {
+        setError(e.message || "Failed to analyze article bias.");
+      }
     } finally {
       setIsAnalyzing(false);
     }
@@ -340,6 +357,7 @@ export default function App() {
 
   const runRewrite = async () => {
     if (!analysis) return;
+    const revision = inputRevision.current;
     setIsRewriting(true);
     setError(null);
 
@@ -361,9 +379,11 @@ export default function App() {
       }
 
       const data = await res.json();
-      setRewrite(data);
+      if (revision === inputRevision.current) setRewrite(data);
     } catch (e: any) {
-      setError(e.message || "Failed to generate neutral rewrite.");
+      if (revision === inputRevision.current) {
+        setError(e.message || "Failed to generate neutral rewrite.");
+      }
     } finally {
       setIsRewriting(false);
     }
@@ -570,7 +590,7 @@ export default function App() {
             <input
               type="text"
               value={title}
-              onChange={(e) => setTitle(e.target.value)}
+              onChange={(e) => editArticle("title", e.target.value)}
               placeholder="e.g. Breaking News Headline..."
               className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg px-3.5 py-2 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
             />
@@ -588,7 +608,7 @@ export default function App() {
             <textarea
               rows={12}
               value={text}
-              onChange={(e) => setText(e.target.value)}
+              onChange={(e) => editArticle("text", e.target.value)}
               placeholder="Paste article text here..."
               className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg p-3.5 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 font-serif leading-relaxed focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[220px]"
             />
