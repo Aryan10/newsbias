@@ -303,6 +303,7 @@ class RewriteRequest(BaseModel):
 # ── Response Cache ────────────────────────────────────────────────────────────
 # In-memory runtime cache for custom or repeated requests
 ANALYSIS_CACHE: dict[str, dict[str, Any]] = {}
+REWRITE_CACHE: dict[str, dict[str, Any]] = {}
 
 
 def get_cache_key(title: str, text: str, *, use_mock: bool = False) -> str:
@@ -484,6 +485,12 @@ async def analyze_bias_tribunal(req: AnalyzeRequest) -> dict[str, Any]:
 @app.post("/bias/rewrite")
 async def suggest_rewrite(req: RewriteRequest) -> dict[str, Any]:
     """Execute 'Suggest rewrite' feature to de-bias text into AP wire style."""
+    # Every prompt input matters. Preserve exact text, including paragraph spacing.
+    payload = json.dumps(req.model_dump(), sort_keys=True, ensure_ascii=False)
+    cache_key = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    if cache_key in REWRITE_CACHE:
+        return REWRITE_CACHE[cache_key]
+
     client = None
     try:
         client = get_openai_client()
@@ -538,6 +545,7 @@ async def suggest_rewrite(req: RewriteRequest) -> dict[str, Any]:
             "changes": changes,
         }
 
+    REWRITE_CACHE[cache_key] = rewrite_output
     return rewrite_output
 
 
