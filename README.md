@@ -67,16 +67,6 @@ python cli.py eval gpt-5-mini --political --limit 20
 
 ---
 
-## Prompt Templates
-
-Built-in templates live in `src/newsbias/prompts/`. Edit these files to update the
-default analysis and rewriting instructions. They are included in the Python package.
-
-For custom templates, `JinjaPrompt.load()` also accepts a direct file path or explicit
-`search_paths`. A local `prompts/` directory can override the packaged defaults.
-
----
-
 ## REST API Endpoints
 
 | Endpoint | Method | Description |

@@ -96,10 +96,9 @@ def test_analyze_article_llm_mocked() -> None:
     assert res["biased_sentences"][0]["quote"] == "reckless move"
 
 
-def test_get_openai_client_ignores_foundry_api_key(monkeypatch) -> None:
-    """Only OPENAI_API_KEY or an explicit key can configure the client."""
+def test_get_openai_client_requires_api_key(monkeypatch) -> None:
+    """An API key must be supplied explicitly or through OPENAI_API_KEY."""
     monkeypatch.setenv("OPENAI_API_KEY", "")
-    monkeypatch.setenv("FOUNDRY_API_KEY", "foundry-key")
 
     with pytest.raises(ValueError, match="OPENAI_API_KEY"):
         get_openai_client()

@@ -63,7 +63,7 @@ class RenderedPrompt:
 
         # Configure completion tokens & reasoning effort for reasoning models
         kwargs: dict[str, Any] = {}
-        if target_model.startswith(("gpt-5", "o1", "o3", "o4")):
+        if target_model.startswith(("gpt-5", "gpt-6", "o1", "o3", "o4")):
             kwargs["max_completion_tokens"] = 4096
             kwargs["reasoning_effort"] = "low"
         else:

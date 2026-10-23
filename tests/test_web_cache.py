@@ -10,8 +10,15 @@ web = importlib.import_module("newsbias.web.app")
 
 @pytest.fixture
 def cached_client(monkeypatch):
-    # Retain precomputed entries, but isolate runtime writes between tests.
-    monkeypatch.setattr(web, "ANALYSIS_CACHE", dict(web.ANALYSIS_CACHE))
+    # Seed a known result independently of the user's disposable web cache.
+    sample = web.BENCHMARK_SAMPLES[0]
+    seeded = {
+        "input": {"title": sample["title"], "text": sample["text"]},
+        "sentences": [{"text": sample["text"], "is_biased": True, "score": 0.9}],
+    }
+    monkeypatch.setattr(web, "ANALYSIS_CACHE", {
+        web.get_cache_key(sample["title"], sample["text"]): seeded,
+    })
     monkeypatch.setattr(web, "get_openai_client", lambda: None)
     calls = []
 
