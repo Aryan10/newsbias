@@ -20,6 +20,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from newsbias.ingestion.live_news import get_live_news_feed
 from newsbias.language import detect_article_language
 from newsbias.models.llm import get_openai_client
 from newsbias.pipeline.analyzer import analyze_article
@@ -348,6 +349,13 @@ if BENCHMARK_CACHE_FILE.is_file():
 def get_bias_samples():
     """Return curated benchmark samples with diverse bias distributions."""
     return BENCHMARK_SAMPLES
+
+
+@app.get("/bias/live-news")
+def get_live_news(refresh: bool = False, limit: int = 5):
+    """Retrieve bounded live news stories from configured external news APIs."""
+    capped_limit = max(1, min(limit, 10))
+    return get_live_news_feed(limit_per_provider=capped_limit, force_refresh=refresh)
 
 
 @app.post("/bias/analyze")

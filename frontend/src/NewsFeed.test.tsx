@@ -81,4 +81,146 @@ describe("Newsfeed", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(fetchMock.mock.calls[0][0]).toBe("/bias/samples");
   });
+
+  it("supports switching between Curated and Live collections and shows refresh button", () => {
+    const onSelectCollection = vi.fn();
+    const onRefresh = vi.fn();
+    const { rerender } = render(
+      <NewsFeed
+        stories={stories}
+        selectedId={null}
+        onOpen={vi.fn()}
+        collection="curated"
+        onSelectCollection={onSelectCollection}
+        onRefresh={onRefresh}
+      />
+    );
+    expect(screen.getByRole("tab", { name: "Curated" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("tab", { name: "Live" }).getAttribute("aria-selected")).toBe("false");
+    expect(screen.queryByRole("button", { name: "Refresh live news" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Live" }));
+    expect(onSelectCollection).toHaveBeenCalledWith("live");
+
+    rerender(
+      <NewsFeed
+        stories={stories}
+        selectedId={null}
+        onOpen={vi.fn()}
+        collection="live"
+        onSelectCollection={onSelectCollection}
+        onRefresh={onRefresh}
+      />
+    );
+    expect(screen.getByRole("tab", { name: "Live" }).getAttribute("aria-selected")).toBe("true");
+    const refreshBtn = screen.getByRole("button", { name: "Refresh live news" });
+    expect(refreshBtn).toBeTruthy();
+    fireEvent.click(refreshBtn);
+    expect(onRefresh).toHaveBeenCalledOnce();
+  });
+
+  it("shows loading state for empty live feed", () => {
+    render(
+      <NewsFeed
+        stories={[]}
+        selectedId={null}
+        onOpen={vi.fn()}
+        collection="live"
+        onSelectCollection={vi.fn()}
+        isLoading={true}
+      />
+    );
+    expect(screen.getByText("Fetching live news stories...")).toBeTruthy();
+  });
+
+  it("opening a live feed story calls /bias/import/url with article URL rather than copying preview", async () => {
+    const curatedSample = {
+      id: "curated-1",
+      title: "Curated Sample Title",
+      text: "Curated article body.",
+      dataset: "Curated Dataset",
+      category: "General",
+      source_name: "Curated Wire",
+      source_url: "https://news.example/curated-1",
+    };
+
+    const liveStory: FeedStory = {
+      id: "rapidapi:abc12345",
+      title: "Live Breaking News Headline",
+      source: "The Hindu",
+      section: "National",
+      description: "Truncated preview snippet ...",
+      content: undefined,
+      url: "https://thehindu.com/article/live-123",
+      publishedAt: "2026-10-30T10:00:00Z",
+      collection: "live",
+    };
+
+    const extractedArticle = {
+      title: "Extracted Full Headline",
+      text: "This is the full extracted article content retrieved by Trafilatura from the real URL.",
+      source: {
+        type: "url",
+        url: "https://thehindu.com/article/live-123",
+        author: "Correspondent",
+        publication_date: "2026-10-30",
+      },
+      extraction: {
+        method: "trafilatura",
+        notices: ["Extracted 3 paragraphs."],
+      },
+    };
+
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+      if (url === "/bias/samples") {
+        return { ok: true, json: async () => [curatedSample] };
+      }
+      if (url === "/bias/live-news") {
+        return {
+          ok: true,
+          json: async () => ({
+            stories: [liveStory],
+            providers: { rapidapi: { status: "ok", count: 1 } },
+            cached: false,
+          }),
+        };
+      }
+      if (url === "/bias/import/url") {
+        return { ok: true, json: async () => extractedArticle };
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+
+    // Initial load fetches /bias/samples
+    await waitFor(() => expect(screen.getByRole("button", { name: "Open article: Curated Sample Title" })).toBeTruthy());
+
+    // Switch to Live collection
+    const liveTab = screen.getByRole("tab", { name: "Live" });
+    fireEvent.click(liveTab);
+
+    // Live news request is fired
+    await waitFor(() => expect(screen.getByRole("button", { name: "Open article: Live Breaking News Headline" })).toBeTruthy());
+    expect(fetchMock).toHaveBeenCalledWith("/bias/live-news");
+
+    // Click "Open article" for the live story
+    fireEvent.click(screen.getByRole("button", { name: "Open article: Live Breaking News Headline" }));
+
+    // Verify /bias/import/url was invoked with the exact article URL
+    await waitFor(() => {
+      const importCalls = fetchMock.mock.calls.filter((call) => call[0] === "/bias/import/url");
+      expect(importCalls).toHaveLength(1);
+      const postBody = JSON.parse(importCalls[0][1].body);
+      expect(postBody.url).toBe("https://thehindu.com/article/live-123");
+    });
+
+    // Verify the Article tab receives the full extracted text, NOT the truncated preview
+    await waitFor(() => {
+      expect(screen.getByDisplayValue("Extracted Full Headline")).toBeTruthy();
+      expect(screen.getByDisplayValue("This is the full extracted article content retrieved by Trafilatura from the real URL.")).toBeTruthy();
+    });
+    expect(screen.queryByDisplayValue("Truncated preview snippet ...")).toBeNull();
+  });
 });

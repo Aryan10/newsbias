@@ -1,4 +1,4 @@
-"""Public HTTPS fetching adapted from DistillNews's pipeline/scrapers/safe_fetch.py."""
+"""Public HTTPS fetching with SSRF protection, size caps, and connection timeouts."""
 
 import ipaddress
 import socket

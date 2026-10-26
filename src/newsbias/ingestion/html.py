@@ -1,4 +1,4 @@
-"""News page metadata and paragraph extraction adapted from DistillNews."""
+"""News page metadata and paragraph extraction utilities."""
 
 import re
 from dataclasses import dataclass

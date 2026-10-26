@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from "react";
+import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import ArticleInputTabs from "./ArticleInputTabs";
 import type { ImportedArticle } from "./ArticleInputTabs";
 import NewsFeed from "./NewsFeed";
@@ -216,6 +216,11 @@ export default function App() {
   const [selectedPresetRevision, setSelectedPresetRevision] = useState(0);
   const [importedArticle, setImportedArticle] = useState<ImportedArticle | null>(null);
 
+  const [feedCollection, setFeedCollection] = useState<"curated" | "live">("curated");
+  const [liveStories, setLiveStories] = useState<FeedStory[]>([]);
+  const [isLiveLoading, setIsLiveLoading] = useState(false);
+  const [extractingLiveStoryId, setExtractingLiveStoryId] = useState<string | null>(null);
+
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isRewriting, setIsRewriting] = useState(false);
   const [analysis, setAnalysis] = useState<AnalysisData | null>(null);
@@ -308,6 +313,62 @@ export default function App() {
     setTitle(article.title);
     setText(article.text);
     setImportedArticle(article);
+  };
+
+  const fetchLiveNews = useCallback(async (refresh = false) => {
+    setIsLiveLoading(true);
+    try {
+      const res = await fetch(`/bias/live-news${refresh ? "?refresh=true" : ""}`);
+      if (!res.ok) throw new Error("Could not load live news.");
+      const data = await res.json();
+      if (Array.isArray(data.stories)) {
+        setLiveStories(data.stories);
+      }
+    } catch {
+      setError("Could not load live news feed. Provider may be temporarily unavailable.");
+    } finally {
+      setIsLiveLoading(false);
+    }
+  }, []);
+
+  const handleSelectCollection = (col: "curated" | "live") => {
+    setFeedCollection(col);
+    if (col === "live" && liveStories.length === 0 && !isLiveLoading) {
+      fetchLiveNews(false);
+    }
+  };
+
+  const handleOpenStory = async (story: FeedStory) => {
+    const sample = samples.find((item) => item.id === story.id);
+    if (sample) {
+      selectSample(sample);
+      return;
+    }
+
+    if (!story.url) return;
+    setExtractingLiveStoryId(story.id);
+    setError(null);
+    try {
+      const res = await fetch("/bias/import/url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: story.url }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          typeof data.detail === "string"
+            ? data.detail
+            : "Could not extract article text from live URL."
+        );
+      }
+      applyImport(data as ImportedArticle);
+      setSelectedPresetRevision((revision) => revision + 1);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to extract live article.");
+    } finally {
+      setExtractingLiveStoryId(null);
+    }
   };
 
   const editArticle = (field: "title" | "text", value: string) => {
@@ -531,11 +592,23 @@ export default function App() {
         )}
         </div>
         <aside className="feed-sidebar" aria-label="Newsfeed">
-          <NewsFeed compact stories={feedStories} selectedId={activeSampleId} collectionLabel="Curated collection"
-            onOpen={(story) => {
-              const sample = samples.find((item) => item.id === story.id);
-              if (sample) selectSample(sample);
-            }} />
+          <NewsFeed
+            compact
+            stories={feedCollection === "curated" ? feedStories : liveStories}
+            selectedId={
+              activeSampleId ||
+              (importedArticle?.source.url
+                ? liveStories.find((s) => s.url === importedArticle.source.url)?.id || null
+                : null)
+            }
+            collectionLabel={feedCollection === "curated" ? "Curated collection" : "Live API news"}
+            collection={feedCollection}
+            onSelectCollection={handleSelectCollection}
+            isLoading={isLiveLoading}
+            onRefresh={() => fetchLiveNews(true)}
+            loadingStoryId={extractingLiveStoryId}
+            onOpen={handleOpenStory}
+          />
         </aside>
         </div>
 
@@ -868,7 +941,7 @@ export default function App() {
                 News Bias Detection using Machine Learning
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-                Multi-specialist machine learning and editorial arbiter architecture for detecting micro-sentence spin, political stance, and media bias across news articles.
+                ...
               </p>
             </div>
 

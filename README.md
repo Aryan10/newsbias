@@ -37,6 +37,8 @@ horizontally scrollable row on narrower screens. Search is always available; sec
 and source filters open from the filter button. The editor and feed fill the initial
 viewport without global page scrolling, with local scrolling for article text and
 stories. Completed analysis automatically scrolls to and focuses the results below.
+The interface uses 1.5× scaling and light/dark theme-aware scrollbars. Short viewports
+provide local editor scrolling so the enlarged controls remain reachable.
 Select **Open article** to load a story in the editor; **Source** opens its reference
 site separately. News API integration can supply the same provider-neutral story
 metadata, including actual publication dates and images when available. See
