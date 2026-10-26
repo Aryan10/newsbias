@@ -1,4 +1,9 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
+import ArticleInputTabs from "./ArticleInputTabs";
+import type { ImportedArticle } from "./ArticleInputTabs";
+import NewsFeed from "./NewsFeed";
+import type { FeedStory } from "./NewsFeed";
+import SkippedSpecialist from "./SkippedSpecialist";
 import {
   Shield,
   Sparkles,
@@ -8,8 +13,6 @@ import {
   Scale,
   FileText,
   Sliders,
-  ChevronLeft,
-  ChevronRight,
   Info,
   X,
   Sun,
@@ -29,26 +32,32 @@ interface SampleItem {
 
 interface SentenceItem {
   text: string;
-  is_biased: boolean;
+  is_biased: boolean | null;
   label: string;
-  score: number;
+  score: number | null;
 }
 
 interface AnalysisData {
+  language?: { code: string; name: string; confidence: number; status: string; transformers_supported: boolean };
+  analysis_method?: string;
   input: { title?: string; text: string };
   sentences: SentenceItem[];
   specialist_sentence: {
+    status?: string;
+    reason?: string;
     label: string;
-    biased_sentence_count: number;
+    biased_sentence_count: number | null;
     total_sentences: number;
-    bias_ratio: number;
+    bias_ratio: number | null;
     flagged_sentences: SentenceItem[];
   };
   specialist_political: {
+    status?: string;
+    reason?: string;
     method: string;
     model_name: string;
     predicted_label: string;
-    confidence: number;
+    confidence: number | null;
     scores: Record<string, number>;
   };
   isolated_llm: {
@@ -84,34 +93,14 @@ interface RewriteData {
   editorial_summary?: string;
 }
 
-const DATASET_SOURCES: Record<string, string> = {
-  aravalli: "https://www.downtoearth.org.in",
-  kashmir: "https://www.thehindu.com",
-  ladakh: "https://indianexpress.com",
-  babe: "https://huggingface.co/datasets/mediabiasgroup/BABE",
-  mbic: "https://github.com/Media-Bias-Group/news-bias-full-data",
-  allsides: "https://www.allsides.com/media-bias",
-  basil: "https://github.com/fanzhang-f/BASIL",
-  anno_lexical: "https://github.com/Media-Bias-Group",
-  mbib: "https://huggingface.co/mediabiasgroup/mbib-base",
-  reuters: "https://www.reuters.com",
+const SAMPLE_SECTIONS: Record<string, string> = {
+  "aravalli-forest-dispute": "Environment", "kashmir-maps-bias": "World",
+  "ladakh-sixth-schedule": "Politics", "babe-delhi-smog": "Environment",
+  "wire-fed-neutral": "Business", "babe-h1b-india": "Business",
+  "babe-india-diplomacy": "World", "babe-1458": "Politics",
+  "allsides-salon-2014": "Politics", "mbic-climate-spin": "Environment",
+  "basil-tax-reform": "Business",
 };
-
-function getDatasetSource(datasetText: string, sourceUrl?: string): string {
-  if (sourceUrl) return sourceUrl;
-  const d = (datasetText || "").toLowerCase();
-  if (d.includes("aravalli")) return DATASET_SOURCES.aravalli;
-  if (d.includes("kashmir")) return DATASET_SOURCES.kashmir;
-  if (d.includes("ladakh")) return DATASET_SOURCES.ladakh;
-  if (d.includes("babe")) return DATASET_SOURCES.babe;
-  if (d.includes("mbic")) return DATASET_SOURCES.mbic;
-  if (d.includes("allsides")) return DATASET_SOURCES.allsides;
-  if (d.includes("basil")) return DATASET_SOURCES.basil;
-  if (d.includes("anno")) return DATASET_SOURCES.anno_lexical;
-  if (d.includes("mbib")) return DATASET_SOURCES.mbib;
-  if (d.includes("reuters") || d.includes("wire") || d.includes("ap")) return DATASET_SOURCES.reuters;
-  return "https://huggingface.co/datasets";
-}
 
 const DEFAULT_SAMPLES: SampleItem[] = [
   {
@@ -221,6 +210,11 @@ export default function App() {
   const [text, setText] = useState(DEFAULT_SAMPLES[0].text);
   const [activeSampleId, setActiveSampleId] = useState<string | null>(DEFAULT_SAMPLES[0].id);
   const inputRevision = useRef(0);
+  const inputEditorRef = useRef<HTMLDivElement>(null);
+  const articleTitleRef = useRef<HTMLInputElement>(null);
+  const analysisResultsRef = useRef<HTMLElement>(null);
+  const [selectedPresetRevision, setSelectedPresetRevision] = useState(0);
+  const [importedArticle, setImportedArticle] = useState<ImportedArticle | null>(null);
 
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isRewriting, setIsRewriting] = useState(false);
@@ -228,8 +222,6 @@ export default function App() {
   const [rewrite, setRewrite] = useState<RewriteData | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const [canScrollLeft, setCanScrollLeft] = useState(false);
-  const [canScrollRight, setCanScrollRight] = useState(true);
   const [isAboutOpen, setIsAboutOpen] = useState(false);
   const [theme, setTheme] = useState<"light" | "dark">(() => {
     try {
@@ -254,43 +246,34 @@ export default function App() {
     setTheme((prev) => (prev === "light" ? "dark" : "light"));
   };
 
-  const sliderRef = useRef<HTMLDivElement>(null);
-
-  const checkScrollBounds = useCallback(() => {
-    const el = sliderRef.current;
-    if (!el) return;
-    const { scrollLeft, scrollWidth, clientWidth } = el;
-    setCanScrollLeft(scrollLeft > 4);
-    setCanScrollRight(scrollLeft + clientWidth < scrollWidth - 4);
-  }, []);
-
-  const scrollSlider = (direction: "left" | "right") => {
-    if (sliderRef.current) {
-      const scrollAmount = sliderRef.current.clientWidth;
-      sliderRef.current.scrollBy({
-        left: direction === "left" ? -scrollAmount : scrollAmount,
-        behavior: "smooth",
-      });
-      setTimeout(checkScrollBounds, 350);
-    }
-  };
-
-  const handleSliderWheel = (e: React.WheelEvent<HTMLDivElement>) => {
-    if (sliderRef.current) {
-      if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
-        sliderRef.current.scrollLeft += e.deltaY;
-      } else {
-        sliderRef.current.scrollLeft += e.deltaX;
-      }
-      checkScrollBounds();
-    }
-  };
+  useEffect(() => {
+    if (!selectedPresetRevision) return;
+    const frame = requestAnimationFrame(() => {
+      const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+      inputEditorRef.current?.scrollIntoView?.({ behavior: reducedMotion ? "auto" : "smooth", block: "start" });
+      articleTitleRef.current?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [selectedPresetRevision]);
 
   useEffect(() => {
-    checkScrollBounds();
-    window.addEventListener("resize", checkScrollBounds);
-    return () => window.removeEventListener("resize", checkScrollBounds);
-  }, [checkScrollBounds, samples]);
+    if (!analysis) return;
+    const frame = requestAnimationFrame(() => {
+      const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+      analysisResultsRef.current?.scrollIntoView?.({
+        behavior: reducedMotion ? "auto" : "smooth", block: "start",
+      });
+      analysisResultsRef.current?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [analysis]);
+
+  const feedStories = useMemo<FeedStory[]>(() => samples.map((sample) => ({
+    id: sample.id, title: sample.title, source: sample.source_name || sample.dataset,
+    section: SAMPLE_SECTIONS[sample.id] || "General",
+    description: sample.text.split(/\n\s*\n/)[0], content: sample.text,
+    url: sample.source_url, collection: sample.dataset,
+  })), [samples]);
 
   useEffect(() => {
     fetch("/bias/samples")
@@ -315,6 +298,16 @@ export default function App() {
     setActiveSampleId(s.id);
     setTitle(s.title);
     setText(s.text);
+    setImportedArticle(null);
+    setSelectedPresetRevision((revision) => revision + 1);
+  };
+
+  const applyImport = (article: ImportedArticle) => {
+    invalidateResults();
+    setActiveSampleId(null);
+    setTitle(article.title);
+    setText(article.text);
+    setImportedArticle(article);
   };
 
   const editArticle = (field: "title" | "text", value: string) => {
@@ -396,19 +389,23 @@ export default function App() {
     (isBiased ? "Why is it biased?" : "Why is it not biased?");
 
   const activeSample = samples.find((s) => s.id === activeSampleId);
+  const sourceUrl = importedArticle?.source.url || activeSample?.source_url;
+  const sourceName = importedArticle?.source.filename
+    || (importedArticle?.source.url ? new URL(importedArticle.source.url).hostname : null)
+    || activeSample?.source_name || activeSample?.dataset;
 
   return (
-    <div className="flex flex-col min-h-screen bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 transition-colors duration-200">
+    <div className="newsbias-shell flex flex-col bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 transition-colors duration-200">
       {/* ── Top Navigation ──────────────────────────────────────────────── */}
-      <header className="border-b bg-white/95 dark:bg-slate-900/95 backdrop-blur sticky top-0 z-40 border-slate-200 dark:border-slate-800 transition-colors duration-200">
-        <div className="max-w-6xl mx-auto px-8 sm:px-12 py-3.5 flex justify-between items-center">
-          <div className="flex items-center gap-2">
-            <Scale className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />
-            <span className="text-base font-bold tracking-tight text-slate-900 dark:text-white">
+      <header className="h-14 shrink-0 border-b bg-white/95 dark:bg-slate-900/95 backdrop-blur sticky top-0 z-40 border-slate-200 dark:border-slate-800 transition-colors duration-200">
+        <div className="h-full px-3 sm:px-4 lg:px-5 flex justify-between items-center gap-3">
+          <div className="flex min-w-0 items-center gap-2">
+            <Scale className="h-5 w-5 shrink-0 text-indigo-600 dark:text-indigo-400" />
+            <span className="text-sm sm:text-base truncate font-bold tracking-tight text-slate-900 dark:text-white">
               News Bias Detection using Machine Learning
             </span>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex shrink-0 items-center gap-3">
             <button
               type="button"
               id="about-btn"
@@ -436,158 +433,30 @@ export default function App() {
       </header>
 
       {/* ── Main Content Container ───────────────────────────────────────── */}
-      <main className="max-w-6xl mx-auto px-8 sm:px-12 py-8 flex-1 flex flex-col gap-8 w-full">
-        {/* ── 1. Benchmark Sample Selector Slider ───────────────────────────── */}
-        <div className="flex flex-col gap-2.5">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-              Select Curated Benchmark Sample:
-            </span>
-            <div className="flex items-center gap-1.5">
-              <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-400 dark:text-slate-500 font-mono hidden sm:inline-flex mr-2">
-                <a
-                  href={DATASET_SOURCES.babe}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 hover:underline hover:decoration-slate-400 underline-offset-2 transition-colors"
-                >
-                  BABE
-                </a>
-                <span>·</span>
-                <a
-                  href={DATASET_SOURCES.mbic}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 hover:underline hover:decoration-slate-400 underline-offset-2 transition-colors"
-                >
-                  MBIC
-                </a>
-                <span>·</span>
-                <a
-                  href={DATASET_SOURCES.allsides}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 hover:underline hover:decoration-slate-400 underline-offset-2 transition-colors"
-                >
-                  AllSides
-                </a>
-                <span>·</span>
-                <a
-                  href={DATASET_SOURCES.basil}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 hover:underline hover:decoration-slate-400 underline-offset-2 transition-colors"
-                >
-                  BASIL
-                </a>
-                <span>·</span>
-                <a
-                  href={DATASET_SOURCES.anno_lexical}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 hover:underline hover:decoration-slate-400 underline-offset-2 transition-colors"
-                >
-                  Anno-Lexical
-                </a>
-                <span>·</span>
-                <a
-                  href={DATASET_SOURCES.mbib}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 hover:underline hover:decoration-slate-400 underline-offset-2 transition-colors"
-                >
-                  MBIB
-                </a>
-                <span>·</span>
-                <a
-                  href={DATASET_SOURCES.reuters}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 hover:underline hover:decoration-slate-400 underline-offset-2 transition-colors"
-                >
-                  Reuters/AP
-                </a>
-              </div>
-              <button
-                type="button"
-                id="slider-prev-btn"
-                onClick={() => scrollSlider("left")}
-                disabled={!canScrollLeft}
-                aria-label="Scroll left"
-                className={`p-1.5 rounded-lg border transition-all ${
-                  canScrollLeft
-                    ? "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-750 text-slate-700 dark:text-slate-200 shadow-xs cursor-pointer active:scale-95"
-                    : "border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 text-slate-300 dark:text-slate-600 cursor-not-allowed opacity-40 shadow-none"
-                }`}
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </button>
-              <button
-                type="button"
-                id="slider-next-btn"
-                onClick={() => scrollSlider("right")}
-                disabled={!canScrollRight}
-                aria-label="Scroll right"
-                className={`p-1.5 rounded-lg border transition-all ${
-                  canScrollRight
-                    ? "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-750 text-slate-700 dark:text-slate-200 shadow-xs cursor-pointer active:scale-95"
-                    : "border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 text-slate-300 dark:text-slate-600 cursor-not-allowed opacity-40 shadow-none"
-                }`}
-              >
-                <ChevronRight className="h-4 w-4" />
-              </button>
-            </div>
-          </div>
-
-          {/* Slider track: shows 3 at a time, scroll wheel supported, no scroll bar */}
-          <div
-            ref={sliderRef}
-            onScroll={checkScrollBounds}
-            onWheel={handleSliderWheel}
-            className="flex flex-row gap-3 overflow-x-auto no-scrollbar scroll-smooth py-1.5 px-0.5"
-          >
-            {samples.map((s) => {
-              const active = activeSampleId === s.id;
-              return (
-                <button
-                  key={s.id}
-                  id={`sample-btn-${s.id}`}
-                  onClick={() => selectSample(s)}
-                  className={`flex-shrink-0 text-left p-3.5 rounded-xl border text-sm transition-all w-[calc(33.333%-0.5rem)] min-w-[270px] ${
-                    active
-                      ? "border-indigo-600 dark:border-indigo-500 bg-indigo-50/50 dark:bg-indigo-950/40 shadow-sm ring-1 ring-indigo-500"
-                      : "border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 bg-white dark:bg-slate-900 shadow-xs"
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-1">
-                    <a
-                      href={getDatasetSource(s.dataset, s.source_url)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      onClick={(e) => e.stopPropagation()}
-                      title={`View ${s.source_name || s.dataset} source`}
-                      className="text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300 hover:underline hover:decoration-slate-400 underline-offset-2 transition-colors"
-                    >
-                      {s.dataset}
-                    </a>
-                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
-                      {s.category.split(" ")[0]}
-                    </span>
-                  </div>
-                  <div className="font-semibold text-xs text-slate-900 dark:text-slate-100 line-clamp-1">{s.title}</div>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
+      <main className="px-3 sm:px-4 lg:px-5 py-3 sm:py-4 flex-1 flex flex-col gap-6 w-full min-w-0">
+        <div className="input-workspace">
         {/* ── 2. Input Editor ──────────────────────────────────────────────── */}
-        <div className="border border-slate-200 dark:border-slate-800 rounded-2xl p-5 bg-white dark:bg-slate-900 flex flex-col gap-4 shadow-sm transition-colors duration-200">
+        <div ref={inputEditorRef} className="article-editor scroll-mt-20 border border-slate-200 dark:border-slate-800 rounded-xl p-3 sm:p-4 bg-white dark:bg-slate-900 flex flex-col gap-2 shadow-sm transition-colors duration-200">
+          <ArticleInputTabs articleRevision={inputRevision} selectedPresetRevision={selectedPresetRevision}
+            onImport={applyImport}>
+          {importedArticle && (
+            <div className="text-xs text-slate-500 dark:text-slate-400 flex flex-col gap-1">
+              <p>
+                Imported from {importedArticle.source.type === "raw" ? "copied website text"
+                  : sourceName || "a document"}. Review the extracted headline and original text below.
+                {importedArticle.source.author && ` By ${importedArticle.source.author}.`}
+                {importedArticle.source.publication_date && ` Published ${importedArticle.source.publication_date}.`}
+              </p>
+              {importedArticle.extraction.notices.map((notice, index) => <p key={index}>{notice}</p>)}
+            </div>
+          )}
           <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+            <label htmlFor="article-title" className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
               Article Title (Optional)
             </label>
             <input
+              id="article-title"
+              ref={articleTitleRef}
               type="text"
               value={title}
               onChange={(e) => editArticle("title", e.target.value)}
@@ -596,7 +465,7 @@ export default function App() {
             />
           </div>
 
-          <div className="flex flex-col gap-1.5">
+          <div className="article-body flex flex-col gap-1.5">
             <div className="flex justify-between items-center">
               <label className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                 Article Body / Excerpt
@@ -614,20 +483,20 @@ export default function App() {
             />
           </div>
 
-          <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-            <div>
-              {activeSample?.source_url ? (
+          <div className="article-actions sticky bottom-0 z-10 shrink-0 flex flex-wrap items-center justify-between gap-2 pt-1 bg-white dark:bg-slate-900">
+            <div className="min-w-0 max-w-full">
+              {sourceUrl ? (
                 <a
-                  href={activeSample.source_url}
+                  href={sourceUrl}
                   target="_blank"
                   rel="noopener noreferrer"
                   id="article-source-btn"
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-750 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white text-xs font-medium shadow-2xs transition-colors cursor-pointer group"
-                  title={`Open source: ${activeSample.source_name || activeSample.dataset}`}
+                  className="inline-flex max-w-full items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-750 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white text-xs font-medium shadow-2xs transition-colors cursor-pointer group"
+                  title={`Open source: ${sourceName}`}
                 >
-                  <span className="font-semibold text-slate-500 dark:text-slate-400">Source:</span>
-                  <span className="font-medium text-indigo-600 dark:text-indigo-400 group-hover:underline">
-                    {activeSample.source_name || activeSample.dataset}
+                  <span className="shrink-0 font-semibold text-slate-500 dark:text-slate-400">Source:</span>
+                  <span className="truncate font-medium text-indigo-600 dark:text-indigo-400 group-hover:underline">
+                    {sourceName}
                   </span>
                   <ArrowUpRight className="h-3.5 w-3.5 text-slate-400 dark:text-slate-400 group-hover:text-indigo-500 transition-colors" />
                 </a>
@@ -653,18 +522,37 @@ export default function App() {
               )}
             </button>
           </div>
-        </div>
-
+          </ArticleInputTabs>
         {error && (
-          <div className="p-4 rounded-xl border border-red-200 dark:border-red-900/60 bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300 text-sm flex items-center gap-2">
+          <div role="alert" className="shrink-0 max-h-24 overflow-y-auto p-3 rounded-lg border border-red-200 dark:border-red-900/60 bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300 text-xs flex items-center gap-2">
             <AlertTriangle className="h-4 w-4 shrink-0" />
             <span>{error}</span>
           </div>
         )}
+        </div>
+        <aside className="feed-sidebar" aria-label="Newsfeed">
+          <NewsFeed compact stories={feedStories} selectedId={activeSampleId} collectionLabel="Curated collection"
+            onOpen={(story) => {
+              const sample = samples.find((item) => item.id === story.id);
+              if (sample) selectSample(sample);
+            }} />
+        </aside>
+        </div>
 
         {/* ── 3. Results Section ────────────────────────────────────────────── */}
         {analysis && (
-          <div className="flex flex-col gap-8 animate-in fade-in duration-300">
+          <section ref={analysisResultsRef} id="analysis-results" aria-label="Article analysis results"
+            tabIndex={-1} className="scroll-mt-20 focus:outline-none flex flex-col gap-8 animate-in fade-in duration-300">
+            {analysis.language && <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500 dark:text-slate-400">
+              <span>Language: <strong className="font-semibold text-slate-700 dark:text-slate-300">
+                {analysis.language.name} ({analysis.language.code})
+              </strong></span>
+              <span className="rounded-full bg-indigo-50 dark:bg-indigo-950/50 px-3 py-1 font-semibold text-indigo-600 dark:text-indigo-400">
+                {analysis.analysis_method === "llm_only" ? "LLM-only analysis"
+                  : analysis.analysis_method === "mock" ? "Mock preview"
+                  : analysis.analysis_method === "specialists" ? "Specialists · LLM unavailable" : "Specialists + LLM"}
+              </span>
+            </div>}
             {/* Multi-Model Telemetry Grid */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {/* Specialist 1 */}
@@ -675,6 +563,9 @@ export default function App() {
                     RoBERTa BABE
                   </span>
                 </div>
+                {analysis.specialist_sentence.status === "skipped" ? (
+                  <SkippedSpecialist reason={analysis.specialist_sentence.reason} />
+                ) : <>
                 <div className="flex items-baseline justify-between mt-1">
                   <span className="text-2xl font-black text-slate-900 dark:text-slate-100">
                     {Math.round(analysis.specialist_sentence.bias_ratio * 100)}%
@@ -693,6 +584,7 @@ export default function App() {
                   Flagged {analysis.specialist_sentence.biased_sentence_count} of{" "}
                   {analysis.specialist_sentence.total_sentences} sentences as carrying loaded spin.
                 </p>
+                </>}
               </div>
 
               {/* Specialist 2 */}
@@ -703,6 +595,9 @@ export default function App() {
                     DeBERTa AllSides
                   </span>
                 </div>
+                {analysis.specialist_political.status === "skipped" ? (
+                  <SkippedSpecialist reason={analysis.specialist_political.reason} />
+                ) : <>
                 <div className="flex items-baseline justify-between mt-1">
                   <span className="text-xl font-bold uppercase tracking-tight text-slate-900 dark:text-slate-100">
                     {analysis.specialist_political.predicted_label}
@@ -736,6 +631,7 @@ export default function App() {
                     <span>R: {Math.round((analysis.specialist_political.scores?.RIGHT || 0) * 100)}%</span>
                   </div>
                 </div>
+                </>}
               </div>
 
               {/* Specialist 3 */}
@@ -774,14 +670,18 @@ export default function App() {
               <div className="flex items-center justify-between mb-3 border-b border-slate-100 dark:border-slate-800 pb-2">
                 <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
                   <FileText className="h-3.5 w-3.5" />
-                  Sentence-by-Sentence Spin Annotation
+                  {analysis.specialist_sentence.status === "skipped" ? "Article text" : "Sentence-by-Sentence Spin Annotation"}
                 </span>
                 <span className="text-xs text-slate-400 dark:text-slate-500">
-                  Hover sentences to inspect specialist confidence
+                  {analysis.specialist_sentence.status === "skipped"
+                    ? "Sentence specialist not evaluated for this language"
+                    : "Hover sentences to inspect specialist confidence"}
                 </span>
               </div>
               <div className="font-serif text-base leading-loose text-slate-900 dark:text-slate-100">
-                {analysis.sentences.map((s, idx) => (
+                {analysis.specialist_sentence.status === "skipped" ? (
+                  <div className="whitespace-pre-wrap">{analysis.input.text}</div>
+                ) : analysis.sentences.map((s, idx) => (
                   <span
                     key={idx}
                     title={s.is_biased ? `da-roberta-babe score: ${Math.round(s.score * 100)}% biased` : "Neutral sentence"}
@@ -802,7 +702,7 @@ export default function App() {
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-4">
                 <div>
                   <div className="text-xs font-semibold uppercase tracking-widest text-indigo-600 dark:text-indigo-400 mb-1">
-                    Arbiter Consensus Judgment
+                    {analysis.analysis_method === "llm_only" ? "LLM Editorial Judgment" : "Arbiter Consensus Judgment"}
                   </div>
                   {/* Dynamic Heading based on verdict */}
                   <h2 className="text-2xl font-extrabold tracking-tight text-slate-900 dark:text-white">
@@ -813,7 +713,7 @@ export default function App() {
                 <div className="flex items-center gap-3">
                   <div className="text-right">
                     <div className="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">
-                      Consensus Stance
+                      {analysis.analysis_method === "llm_only" ? "LLM Stance" : "Consensus Stance"}
                     </div>
                     <div className="font-bold uppercase text-sm text-slate-900 dark:text-slate-100">
                       {analysis.arbiter?.final_verdict?.overall_leaning || "Neutral"}
@@ -933,7 +833,7 @@ export default function App() {
                 )}
               </div>
             )}
-          </div>
+          </section>
         )}
       </main>
 

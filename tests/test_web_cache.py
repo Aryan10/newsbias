@@ -5,11 +5,16 @@ import importlib
 import pytest
 from fastapi.testclient import TestClient
 
+from newsbias.language import ArticleLanguage
+
 web = importlib.import_module("newsbias.web.app")
 
 
 @pytest.fixture
 def cached_client(monkeypatch):
+    monkeypatch.setattr(web, "detect_article_language", lambda text: ArticleLanguage(
+        "en", "English", 1.0, "detected", ("en",),
+    ))
     # Seed a known result independently of the user's disposable web cache.
     sample = web.BENCHMARK_SAMPLES[0]
     seeded = {

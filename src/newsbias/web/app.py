@@ -20,9 +20,13 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from newsbias.language import detect_article_language
 from newsbias.models.llm import get_openai_client
 from newsbias.pipeline.analyzer import analyze_article
+from newsbias.pipeline.segmenter import split_sentences
 from newsbias.prompts import JinjaPrompt, extract_json_payload
+from newsbias.web.imports import ImportSizeLimitMiddleware
+from newsbias.web.imports import router as import_router
 
 logger = logging.getLogger("newsbias.web")
 
@@ -31,6 +35,8 @@ app = FastAPI(
     version="1.0.0",
     description="Automated media bias, political stance, and editorial tribunal API.",
 )
+app.include_router(import_router)
+app.add_middleware(ImportSizeLimitMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -304,6 +310,7 @@ class RewriteRequest(BaseModel):
 # In-memory runtime cache for custom or repeated requests
 ANALYSIS_CACHE: dict[str, dict[str, Any]] = {}
 REWRITE_CACHE: dict[str, dict[str, Any]] = {}
+ANALYSIS_VERSION = 2
 
 
 def get_cache_key(title: str, text: str, *, use_mock: bool = False) -> str:
@@ -312,7 +319,7 @@ def get_cache_key(title: str, text: str, *, use_mock: bool = False) -> str:
     JSON keeps title/body boundaries unambiguous even when either contains newlines.
     Only surrounding whitespace is ignored, matching endpoint input normalization.
     """
-    payload = json.dumps([title.strip(), text.strip(), use_mock], ensure_ascii=False)
+    payload = json.dumps([ANALYSIS_VERSION, title.strip(), text.strip(), use_mock], ensure_ascii=False)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -324,6 +331,8 @@ if BENCHMARK_CACHE_FILE.is_file():
         if isinstance(precomputed, dict):
             for val in precomputed.values():
                 if not isinstance(val, dict) or not isinstance(val.get("input"), dict):
+                    continue
+                if val.get("analysis_version") != ANALYSIS_VERSION:
                     continue
                 c_title = val["input"].get("title") or ""
                 c_text = val["input"].get("text")
@@ -357,8 +366,17 @@ async def analyze_bias_tribunal(req: AnalyzeRequest) -> dict[str, Any]:
         result["input"] = {"title": title, "text": text}
         return result
 
-    # 1 & 2. Specialist Analysis via NewsBias pipeline
-    pipeline_res = analyze_article(text, use_mock=req.use_mock)
+    language = detect_article_language(text)
+    # Mock mode explicitly simulates specialists for offline testing. Production
+    # checkpoints are evaluated only when the article is confidently English.
+    specialists_enabled = language.transformers_supported or req.use_mock
+    pipeline_res = analyze_article(text, use_mock=req.use_mock) if specialists_enabled else {
+        "political_leaning": {"label": "unknown", "probabilities": {}},
+        "sentences": [
+            {"text": span["text"], "is_biased": None, "score": None}
+            for span in split_sentences(text)
+        ],
+    }
     pol_info = pipeline_res.get("political_leaning", {})
     bias_summary = pipeline_res.get("bias_summary", {})
     sentences = pipeline_res.get("sentences", [])
@@ -367,8 +385,9 @@ async def analyze_bias_tribunal(req: AnalyzeRequest) -> dict[str, Any]:
         {
             "text": s["text"],
             "is_biased": s["is_biased"],
-            "label": "BIASED" if s["is_biased"] else "NON-BIASED",
-            "score": round(s["score"], 4),
+            "label": ("BIASED" if s["is_biased"] else "NON-BIASED")
+            if specialists_enabled else "NOT EVALUATED",
+            "score": round(s["score"], 4) if specialists_enabled else None,
         }
         for s in sentences
     ]
@@ -378,10 +397,13 @@ async def analyze_bias_tribunal(req: AnalyzeRequest) -> dict[str, Any]:
     bias_ratio = round(biased_count / max(1, total_count), 4)
 
     sentence_specialist = {
-        "label": "BIASED" if biased_count > 0 else "NON-BIASED",
-        "biased_sentence_count": biased_count,
+        "status": "mock" if req.use_mock else ("available" if specialists_enabled else "skipped"),
+        "reason": None if specialists_enabled else language.skip_reason,
+        "label": ("BIASED" if biased_count > 0 else "NON-BIASED")
+        if specialists_enabled else "NOT EVALUATED",
+        "biased_sentence_count": biased_count if specialists_enabled else None,
         "total_sentences": total_count,
-        "bias_ratio": bias_ratio,
+        "bias_ratio": bias_ratio if specialists_enabled else None,
         "flagged_sentences": flagged,
     }
 
@@ -391,15 +413,17 @@ async def analyze_bias_tribunal(req: AnalyzeRequest) -> dict[str, Any]:
     conf = probs.get(pred_label.lower(), 0.5)
 
     political_specialist = {
+        "status": sentence_specialist["status"],
+        "reason": sentence_specialist["reason"],
         "method": "huggingface",
         "model_name": "matous-volf/political-leaning-deberta-large",
-        "predicted_label": pred_label,
-        "confidence": round(conf, 4),
+        "predicted_label": pred_label if specialists_enabled else "NOT EVALUATED",
+        "confidence": round(conf, 4) if specialists_enabled else None,
         "scores": {
             "LEFT": round(probs.get("left", 0.0), 4),
             "CENTER": round(probs.get("center", 0.0), 4),
             "RIGHT": round(probs.get("right", 0.0), 4),
-        },
+        } if specialists_enabled else {},
     }
 
     # 3. Isolated Zero-Shot LLM Specialist
@@ -413,12 +437,26 @@ async def analyze_bias_tribunal(req: AnalyzeRequest) -> dict[str, Any]:
     if client:
         try:
             zs_prompt = JinjaPrompt.load("zero_shot_bias")
-            rendered_zs = zs_prompt.render(title=title, content=text)
+            rendered_zs = zs_prompt.render(title=title, content=text, language=language.to_dict())
             isolated_llm = rendered_zs.complete_and_parse_json(client=client)
         except Exception as e:
             logger.warning("Isolated LLM failed: %s", e)
 
-    if not isolated_llm:
+    if not isinstance(isolated_llm, dict):
+        isolated_llm = {}
+    llm_bias_reading = isolated_llm.get("linguistic_bias")
+    llm_stance_reading = isolated_llm.get("political_leaning")
+    valid_llm_reading = (
+        isinstance(llm_bias_reading, dict) and isinstance(llm_bias_reading.get("is_biased"), bool)
+        and isinstance(llm_stance_reading, dict)
+        and llm_stance_reading.get("label") in ("left", "center", "right")
+    )
+    if not specialists_enabled and not valid_llm_reading:
+        raise HTTPException(
+            503, "LLM analysis is required for this language but is unavailable. Check OPENAI_* settings.",
+        )
+
+    if not valid_llm_reading:
         isolated_llm = {
             "political_leaning": {"label": pred_label.lower(), "confidence": round(conf, 2)},
             "linguistic_bias": {"label": "biased" if biased_count > 0 else "non-biased", "is_biased": biased_count > 0, "bias_score": bias_ratio},
@@ -437,27 +475,32 @@ async def analyze_bias_tribunal(req: AnalyzeRequest) -> dict[str, Any]:
                 sentence_specialist=sentence_specialist,
                 political_specialist=political_specialist,
                 isolated_llm_specialist=isolated_llm,
+                language=language.to_dict(),
             )
             arbiter_output = rendered_arb.complete_and_parse_json(client=client)
         except Exception as e:
             logger.warning("Arbiter LLM failed: %s", e)
 
     if not arbiter_output or not arbiter_output.get("final_verdict"):
-        is_biased_consensus = (biased_count > 0) or isolated_llm.get("linguistic_bias", {}).get("is_biased", False)
+        llm_biased = isolated_llm.get("linguistic_bias", {}).get("is_biased", False)
+        is_biased_consensus = ((biased_count > 0) or llm_biased) if specialists_enabled else llm_biased
         heading = "Why is it biased?" if is_biased_consensus else "Why is it not biased?"
         arbiter_output = {
             "final_verdict": {
                 "is_biased": is_biased_consensus,
-                "overall_leaning": pred_label.lower(),
-                "confidence": 0.85,
-                "primary_bias_type": "linguistic" if biased_count > 0 else "none",
+                "overall_leaning": pred_label.lower() if specialists_enabled
+                else isolated_llm["political_leaning"]["label"],
+                "confidence": 0.85 if specialists_enabled
+                else isolated_llm["political_leaning"].get("confidence"),
+                "primary_bias_type": "linguistic" if is_biased_consensus else "none",
             },
             "why_biased_heading": heading,
             "why_biased_explanation": (
                 f"{heading}\n\nThe text was analyzed across sentence-level linguistic spin, political stance, "
                 f"and zero-shot LLM reading. Found {biased_count} out of {total_count} sentences containing loaded phrasing."
-            ),
-            "key_findings": [f"{biased_count} flagged sentences with spin."],
+            ) if specialists_enabled else isolated_llm.get("reasoning", "LLM-only article reading."),
+            "key_findings": [f"{biased_count} flagged sentences with spin."] if specialists_enabled
+            else isolated_llm.get("loaded_phrases", []),
             "suggest_rewrite_recommended": is_biased_consensus,
         }
 
@@ -468,6 +511,11 @@ async def analyze_bias_tribunal(req: AnalyzeRequest) -> dict[str, Any]:
     arbiter_output["why_biased_heading"] = dynamic_heading
 
     result_payload = {
+        "analysis_version": ANALYSIS_VERSION,
+        "language": language.to_dict(),
+        "analysis_method": "mock" if req.use_mock
+        else (("specialists+llm" if valid_llm_reading else "specialists")
+              if specialists_enabled else "llm_only"),
         "input": {"title": title, "text": text},
         "sentences": sentence_details,
         "specialist_sentence": sentence_specialist,
@@ -486,7 +534,7 @@ async def analyze_bias_tribunal(req: AnalyzeRequest) -> dict[str, Any]:
 async def suggest_rewrite(req: RewriteRequest) -> dict[str, Any]:
     """Execute 'Suggest rewrite' feature to de-bias text into AP wire style."""
     # Every prompt input matters. Preserve exact text, including paragraph spacing.
-    payload = json.dumps(req.model_dump(), sort_keys=True, ensure_ascii=False)
+    payload = json.dumps([ANALYSIS_VERSION, req.model_dump()], sort_keys=True, ensure_ascii=False)
     cache_key = hashlib.sha256(payload.encode("utf-8")).hexdigest()
     if cache_key in REWRITE_CACHE:
         return REWRITE_CACHE[cache_key]

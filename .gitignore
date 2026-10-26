@@ -1,5 +1,6 @@
 doc/
 docs/
+notebooks/
 .venv/
 __pycache__/
 *.py[cod]

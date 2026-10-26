@@ -38,6 +38,7 @@ def openai_model(client: object, *, max_retries: int = 3) -> OpenAIChatClassifie
     return OpenAIChatClassifier(
         labels=("left", "center", "right"),
         system_prompt="Classify political leaning. Return JSON labels and scores.",
+        model_name="gpt-5-mini",
         client=client,
         max_retries=max_retries,
     )

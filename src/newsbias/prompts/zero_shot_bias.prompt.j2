@@ -15,6 +15,8 @@ Evaluation Guidelines:
 - Provide a continuous `bias_score` from 0.0 (completely neutral, factual wire reporting) to 1.0 (heavily biased, propagandistic, or loaded).
 - Extract specific loaded words, phrases, or framing markers present in the text.
 - Provide a concise reasoning explaining your verdict.
+- Read the original language directly, including code-switched text. Interpret
+  political framing in its local context; do not assume every article uses US politics.
 
 You must respond ONLY with a valid, parsable JSON object matching this schema:
 {
@@ -40,6 +42,9 @@ You must respond ONLY with a valid, parsable JSON object matching this schema:
 }
 
 # User
+{% if language %}
+Detected article language: {{ language.name }} ({{ language.code }}).
+{% endif %}
 {% if title %}
 Article Title: {{ title }}
 {% endif %}

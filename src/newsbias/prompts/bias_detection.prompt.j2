@@ -19,6 +19,11 @@ As the true judge:
   * If the consensus is BIASED: detail the exact linguistic mechanisms, cherry-picked framing, loaded language, or partisan spin detected. Cite specific sentences or phrases as evidence.
   * If the consensus is NON-BIASED / NEUTRAL: explain why the reporting meets high journalistic standards (e.g. fair balance of sources, neutral attribution verbs, objective factual timeline) despite addressing contentious political or social topics.
 - State whether an editorial rewrite is recommended.
+- Specialists marked "skipped" have NOT evaluated the article. Their missing scores
+  are not neutral/non-biased findings and must not count as votes or evidence.
+  If both transformer specialists are skipped, judge the original-language article
+  using the isolated LLM reading and clearly explain that this is LLM-only analysis.
+  Use concurrence_status="llm_only" in that case.
 
 You must respond ONLY with a valid, parsable JSON object matching this schema:
 {
@@ -38,12 +43,15 @@ You must respond ONLY with a valid, parsable JSON object matching this schema:
     "sentence_specialist_interpretation": "Assessment of Specialist 1 findings",
     "political_specialist_interpretation": "Assessment of Specialist 2 findings",
     "isolated_llm_interpretation": "Assessment of Specialist 3 findings",
-    "concurrence_status": "unanimous" | "majority" | "split"
+    "concurrence_status": "unanimous" | "majority" | "split" | "llm_only"
   },
   "suggest_rewrite_recommended": true
 }
 
 # User
+{% if language %}
+Detected article language: {{ language.name }} ({{ language.code }}).
+{% endif %}
 {% if title %}
 Article Title: {{ title }}
 {% endif %}
@@ -56,6 +64,9 @@ Article Content:
 
 {% if sentence_specialist %}
 #### Specialist 1: Sentence-Level Spin (`da-roberta-babe-ft`)
+{% if sentence_specialist.status == "skipped" %}
+- NOT EVALUATED: {{ sentence_specialist.reason }}
+{% else %}
 - Verdict: {{ sentence_specialist.label | default("unknown") }}
 - Biased Sentences Detected: {{ sentence_specialist.biased_sentence_count | default(0) }} / {{ sentence_specialist.total_sentences | default(0) }} ({{ "%.1f" | format((sentence_specialist.bias_ratio | default(0.0)) * 100) }}%)
 {% if sentence_specialist.flagged_sentences %}
@@ -67,16 +78,21 @@ Flagged Biased Sentences:
 - No individual sentences flagged as overtly biased.
 {% endif %}
 {% endif %}
+{% endif %}
 
 {% if political_specialist %}
 #### Specialist 2: Political Leaning (`AllSides-DeBERTa`)
-- Predicted Stance: {{ political_specialist.label | default("center") | upper }}
+{% if political_specialist.status == "skipped" %}
+- NOT EVALUATED: {{ political_specialist.reason }}
+{% else %}
+- Predicted Stance: {{ political_specialist.predicted_label | default(political_specialist.label | default("center")) | upper }}
 - Confidence: {{ "%.2f" | format(political_specialist.confidence | default(0.0)) }}
 {% if political_specialist.scores %}
 - Class Distribution:
 {% for k, v in political_specialist.scores.items() %}
   * {{ k | upper }}: {{ "%.1f" | format(v * 100) }}%
 {% endfor %}
+{% endif %}
 {% endif %}
 {% endif %}
 
