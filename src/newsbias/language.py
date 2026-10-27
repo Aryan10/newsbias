@@ -42,8 +42,16 @@ def _detector():
 
 def detect_article_language(text: str) -> ArticleLanguage:
     sample = text[:20_000]
-    if sum(character.isalpha() for character in sample) < 20:
+    letters = [character for character in sample if character.isalpha()]
+    if len(letters) < 20:
         return ArticleLanguage("und", "Undetermined", 0.0, "uncertain")
+
+    # If the text is in Latin script in general, keep it as English so that
+    # proper nouns, acronyms, or multilingual names don't cause false non-English rejections.
+    latin_count = sum("LATIN" in unicodedata.name(character, "") for character in letters)
+    if latin_count / len(letters) >= 0.70:
+        return ArticleLanguage("en", "English", 1.0, "detected", ("en",))
+
     detector = _detector()
     ranked = detector.compute_language_confidence_values(sample)
     if not ranked:

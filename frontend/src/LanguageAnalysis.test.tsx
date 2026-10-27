@@ -25,8 +25,9 @@ it("shows skipped specialists without fake scores and preserves original-languag
   const { container } = render(<App />);
   fireEvent.change(screen.getByPlaceholderText("Paste article text here..."), { target: { value: text } });
   fireEvent.click(screen.getByRole("button", { name: "Analyze Bias" }));
-  await waitFor(() => expect(screen.getByText("LLM-only analysis")).toBeTruthy());
-  expect(screen.getByText("Tamil (ta)")).toBeTruthy();
+  await waitFor(() => expect(screen.getByText("LLM Editorial Judgment")).toBeTruthy());
+  expect(screen.queryByText("Language:")).toBeNull();
+  expect(screen.queryByText("LLM-only analysis")).toBeNull();
   expect(screen.getAllByText("Not evaluated")).toHaveLength(2);
   expect(screen.queryByText("0%")).toBeNull();
   expect(screen.queryByText(/% conf/)).toBeNull();

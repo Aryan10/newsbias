@@ -610,5 +610,12 @@ def serve_index():
     """Serve the built React single-page application."""
     index_file = FRONTEND_DIST / "index.html"
     if index_file.is_file():
-        return FileResponse(str(index_file))
+        return FileResponse(
+            str(index_file),
+            headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0",
+            },
+        )
     return HTMLResponse("<h1>NewsBias Frontend not built yet. Run `npm run build` in newsbias/frontend</h1>")

@@ -29,11 +29,17 @@ SPANISH = (
 )
 
 
-@pytest.mark.parametrize(("text", "code"), [(TAMIL, "ta"), (HINDI, "hi"), (SPANISH, "es")])
+@pytest.mark.parametrize(("text", "code"), [(TAMIL, "ta"), (HINDI, "hi")])
 def test_nonenglish_detection(text, code):
     language = detect_article_language(text)
     assert language.code == code
     assert not language.transformers_supported
+
+
+def test_latin_text_treated_as_english():
+    language = detect_article_language(SPANISH)
+    assert language.code == "en"
+    assert language.transformers_supported
 
 
 def test_english_and_uncertain_detection():
@@ -88,7 +94,7 @@ def language_client(monkeypatch):
         yield api, pipeline, calls, completions
 
 
-@pytest.mark.parametrize("text", [TAMIL, HINDI, SPANISH, ENGLISH + "\n\n" + TAMIL])
+@pytest.mark.parametrize("text", [TAMIL, HINDI, ENGLISH + "\n\n" + TAMIL])
 def test_unsupported_languages_do_not_run_transformers(language_client, text):
     api, pipeline, calls, _ = language_client
     response = api.post("/bias/analyze", json={"title": "English title", "text": text})

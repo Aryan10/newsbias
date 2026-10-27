@@ -616,16 +616,6 @@ export default function App() {
         {analysis && (
           <section ref={analysisResultsRef} id="analysis-results" aria-label="Article analysis results"
             tabIndex={-1} className="scroll-mt-20 focus:outline-none flex flex-col gap-8 animate-in fade-in duration-300">
-            {analysis.language && <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500 dark:text-slate-400">
-              <span>Language: <strong className="font-semibold text-slate-700 dark:text-slate-300">
-                {analysis.language.name} ({analysis.language.code})
-              </strong></span>
-              <span className="rounded-full bg-indigo-50 dark:bg-indigo-950/50 px-3 py-1 font-semibold text-indigo-600 dark:text-indigo-400">
-                {analysis.analysis_method === "llm_only" ? "LLM-only analysis"
-                  : analysis.analysis_method === "mock" ? "Mock preview"
-                  : analysis.analysis_method === "specialists" ? "Specialists · LLM unavailable" : "Specialists + LLM"}
-              </span>
-            </div>}
             {/* Multi-Model Telemetry Grid */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {/* Specialist 1 */}
