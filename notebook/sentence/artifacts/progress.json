@@ -1,0 +1,31 @@
+{
+  "status": "complete",
+  "epoch": 3,
+  "batch_cursor": 0,
+  "global_step": 755,
+  "total_steps": 1265,
+  "best_macro_f1": 0.8258591124219767,
+  "history": [
+    {
+      "epoch": 1,
+      "train_loss": 0.49599345311052634,
+      "val_macro_f1": 0.8258591124219767,
+      "val_accuracy": 0.8856152512998267
+    },
+    {
+      "epoch": 2,
+      "train_loss": 0.30222500732602414,
+      "val_macro_f1": 0.822946392954678,
+      "val_accuracy": 0.9003466204506065
+    },
+    {
+      "epoch": 3,
+      "train_loss": 0.12330006294977995,
+      "val_macro_f1": 0.817832618590334,
+      "val_accuracy": 0.8960138648180243
+    }
+  ],
+  "fingerprint": "8f4c6dab866e652acc4673cb8f9315a328ba0d8c2430e1350e6a70670ed10c7d",
+  "archive": "resume.zip",
+  "checkpoint_seconds": 198.36
+}

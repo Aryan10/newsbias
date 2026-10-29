@@ -1,0 +1,28 @@
+{
+  "offline_reload": "passed",
+  "mode": "full",
+  "parameters": 395833346,
+  "labels": {
+    "0": "non-biased",
+    "1": "biased"
+  },
+  "cpu_inference_seconds": 0.9115826019988162,
+  "smoke_predictions": [
+    {
+      "text": "The city council approved the budget on Tuesday.",
+      "label": "non-biased",
+      "probabilities": {
+        "non-biased": 0.9984831213951111,
+        "biased": 0.0015169053804129362
+      }
+    },
+    {
+      "text": "The corrupt administration pushed its reckless, disastrous policy.",
+      "label": "biased",
+      "probabilities": {
+        "non-biased": 0.0025239884853363037,
+        "biased": 0.9974760413169861
+      }
+    }
+  ]
+}

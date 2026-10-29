@@ -1,0 +1,10 @@
+subset,support_total,support_biased,support_non_biased,model,accuracy,macro_f1,biased_precision,biased_recall,biased_f1,non_biased_precision,non_biased_recall,non_biased_f1,tp,fp,fn,tn
+Overall Test Set,2308,447,1861,TF-IDF Baseline,0.8258,0.5584,0.8462,0.123,0.2148,0.8252,0.9946,0.902,55,10,392,1851
+Overall Test Set,2308,447,1861,NewsBias Sentence (Ettin-400M v1),0.8588,0.7919,0.6094,0.7539,0.674,0.9373,0.8839,0.9098,337,216,110,1645
+Overall Test Set,2308,447,1861,HF Specialist (da-roberta-babe-ft),0.8821,0.8175,0.6797,0.7405,0.7088,0.9363,0.9162,0.9261,331,156,116,1705
+BABE Subset (Lexical Spin),693,351,342,TF-IDF Baseline,0.5628,0.4745,0.9138,0.151,0.2592,0.5307,0.9854,0.6899,53,5,298,337
+BABE Subset (Lexical Spin),693,351,342,NewsBias Sentence (Ettin-400M v1),0.7922,0.79,0.7506,0.8832,0.8115,0.8536,0.6988,0.7685,310,103,41,239
+BABE Subset (Lexical Spin),693,351,342,HF Specialist (da-roberta-babe-ft),0.9062,0.9061,0.9554,0.8547,0.9023,0.8654,0.9591,0.9098,300,14,51,328
+BASIL Subset (Informational Bias),1613,95,1518,TF-IDF Baseline,0.9386,0.4941,0.1667,0.0105,0.0198,0.9415,0.9967,0.9683,1,5,94,1513
+BASIL Subset (Informational Bias),1613,95,1518,NewsBias Sentence (Ettin-400M v1),0.8872,0.5807,0.1871,0.2737,0.2222,0.9532,0.9256,0.9392,26,113,69,1405
+BASIL Subset (Informational Bias),1613,95,1518,HF Specialist (da-roberta-babe-ft),0.8717,0.5774,0.1744,0.3158,0.2247,0.9549,0.9065,0.93,30,142,65,1376

@@ -1,0 +1,9 @@
+{
+  "batch_size": 4,
+  "accumulation_steps": 8,
+  "source_weighted_loss": true,
+  "session_seconds": 900,
+  "save_reserve_seconds": 90,
+  "checkpoint_every_seconds": 360,
+  "precision": "auto"
+}
