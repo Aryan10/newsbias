@@ -1,13 +1,40 @@
 """Sentence-level linguistic bias model inference.
 
-Evaluates sentences with `mediabiasgroup/da-roberta-babe-ft` (or alternatives).
-Flat functional design returning standard Python dictionaries.
+Evaluates sentences with fine-tuned sentence bias classifiers.
+Supports configured models via SENTENCE_MODEL_PATH and cached pipeline inference.
 """
+
+import functools
+import os
+from pathlib import Path
+
+DEFAULT_IN_HOUSE_MODEL = "/mnt/OS/newsbias-training/models/newsbias_sentence_full"
+DEFAULT_FALLBACK_MODEL = "mediabiasgroup/da-roberta-babe-ft"
+
+DEFAULT_SENTENCE_MODEL = os.getenv(
+    "SENTENCE_MODEL_PATH",
+    DEFAULT_IN_HOUSE_MODEL if Path(DEFAULT_IN_HOUSE_MODEL).is_dir() else DEFAULT_FALLBACK_MODEL,
+)
+
+
+@functools.lru_cache(maxsize=4)
+def _get_sentence_pipeline(model_name: str, device_id: int):
+    """Cached pipeline instance so model weights stay warm in memory."""
+    from transformers import pipeline
+
+    return pipeline(
+        "text-classification",
+        model=model_name,
+        device=device_id,
+        truncation=True,
+        max_length=512,
+        top_k=None,
+    )
 
 
 def predict_sentence_bias(
     texts,
-    model_name="mediabiasgroup/da-roberta-babe-ft",
+    model_name=None,
     device=None,
     batch_size=32,
 ):
@@ -24,9 +51,10 @@ def predict_sentence_bias(
 
     try:
         import torch
-        from transformers import pipeline
     except ImportError as e:
         raise RuntimeError("Install torch and transformers to run sentence bias prediction") from e
+
+    active_model = model_name or os.getenv("SENTENCE_MODEL_PATH") or DEFAULT_SENTENCE_MODEL
 
     device_id = -1
     if device is None and torch.cuda.is_available():
@@ -34,15 +62,7 @@ def predict_sentence_bias(
     elif isinstance(device, str) and "cuda" in device:
         device_id = 0
 
-    pipe = pipeline(
-        "text-classification",
-        model=model_name,
-        device=device_id,
-        truncation=True,
-        max_length=512,
-        top_k=None,
-    )
-
+    pipe = _get_sentence_pipeline(active_model, device_id)
     raw_outputs = pipe(texts, batch_size=batch_size)
     results = []
 

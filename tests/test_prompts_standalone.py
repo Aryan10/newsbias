@@ -35,8 +35,8 @@ def test_load_and_render_arbiter():
         political_specialist={"label": "RIGHT", "confidence": 0.88},
     )
     assert "Testing content" in rendered.user
-    assert "da-roberta-babe-ft" in rendered.user
-    assert "AllSides-DeBERTa" in rendered.user
+    assert "Sentence-Level Spin" in rendered.user
+    assert "Political Leaning" in rendered.user
 
 
 def test_load_and_render_bias_removal():

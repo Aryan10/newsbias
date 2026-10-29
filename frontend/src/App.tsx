@@ -621,9 +621,9 @@ export default function App() {
               {/* Specialist 1 */}
               <div className="border border-slate-200 dark:border-slate-800 rounded-xl p-4 bg-white dark:bg-slate-900 shadow-xs flex flex-col gap-2 transition-colors duration-200">
                 <div className="flex items-center justify-between text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider border-b border-slate-100 dark:border-slate-800 pb-2">
-                  <span>Sentence Spin Head</span>
+                  <span>Sentence Bias Detector</span>
                   <span className="font-mono text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 px-1.5 py-0.5 rounded">
-                    RoBERTa BABE
+                    Specialist Model
                   </span>
                 </div>
                 {analysis.specialist_sentence.status === "skipped" ? (
@@ -653,9 +653,9 @@ export default function App() {
               {/* Specialist 2 */}
               <div className="border border-slate-200 dark:border-slate-800 rounded-xl p-4 bg-white dark:bg-slate-900 shadow-xs flex flex-col gap-2 transition-colors duration-200">
                 <div className="flex items-center justify-between text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider border-b border-slate-100 dark:border-slate-800 pb-2">
-                  <span>Political Stance</span>
+                  <span>Political Stance Detector</span>
                   <span className="font-mono text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 px-1.5 py-0.5 rounded">
-                    DeBERTa AllSides
+                    Specialist Model
                   </span>
                 </div>
                 {analysis.specialist_political.status === "skipped" ? (
@@ -747,7 +747,7 @@ export default function App() {
                 ) : analysis.sentences.map((s, idx) => (
                   <span
                     key={idx}
-                    title={s.is_biased ? `da-roberta-babe score: ${Math.round(s.score * 100)}% biased` : "Neutral sentence"}
+                    title={s.is_biased ? `Sentence bias score: ${Math.round(s.score * 100)}% biased` : "Neutral sentence"}
                     className={`px-1 py-0.5 rounded cursor-help transition-colors ${
                       s.is_biased
                         ? "bg-amber-100 dark:bg-amber-950/60 text-amber-950 dark:text-amber-200 border-b-2 border-amber-500 dark:border-amber-400 font-medium"
