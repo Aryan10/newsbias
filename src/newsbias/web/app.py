@@ -423,8 +423,8 @@ async def analyze_bias_tribunal(req: AnalyzeRequest) -> dict[str, Any]:
     political_specialist = {
         "status": sentence_specialist["status"],
         "reason": sentence_specialist["reason"],
-        "method": "huggingface",
-        "model_name": "matous-volf/political-leaning-deberta-large",
+        "method": pol_info.get("method", "in_house"),
+        "model_name": pol_info.get("model_name", "newsbias_article"),
         "predicted_label": pred_label if specialists_enabled else "NOT EVALUATED",
         "confidence": round(conf, 4) if specialists_enabled else None,
         "scores": {
