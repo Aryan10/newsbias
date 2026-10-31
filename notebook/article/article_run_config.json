@@ -1,0 +1,14 @@
+{
+  "batch_size": 1,
+  "accumulation_steps": 16,
+  "epochs": 4,
+  "max_length": 512,
+  "overlap": 64,
+  "max_passages": 6,
+  "passage_microbatch": 2,
+  "early_stopping_patience": 2,
+  "session_seconds": 900,
+  "save_reserve_seconds": 180,
+  "checkpoint_every_seconds": 720,
+  "precision": "auto"
+}

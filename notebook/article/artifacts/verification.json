@@ -1,0 +1,45 @@
+{
+  "offline_reload": "passed",
+  "task": "article_political_leaning",
+  "authoritative_epoch": 1,
+  "global_step": 1279,
+  "parameters": 397906566,
+  "labels": [
+    "left",
+    "center",
+    "right"
+  ],
+  "cpu_inference_seconds": 1.644,
+  "smoke_predictions": [
+    {
+      "id": "smoke_1",
+      "text_snippet": "The Senate today passed a bipartisan infrastructure bill allocating 50 billion d...",
+      "predicted": "left",
+      "probabilities": {
+        "left": 0.4337,
+        "center": 0.2409,
+        "right": 0.3255
+      }
+    },
+    {
+      "id": "smoke_2",
+      "text_snippet": "Progressive lawmakers demanded immediate systemic climate action, calling for an...",
+      "predicted": "left",
+      "probabilities": {
+        "left": 0.4055,
+        "center": 0.2232,
+        "right": 0.3713
+      }
+    },
+    {
+      "id": "smoke_3",
+      "text_snippet": "Conservative leaders praised the free market dereglation policies and tax reduct...",
+      "predicted": "right",
+      "probabilities": {
+        "left": 0.0364,
+        "center": 0.032,
+        "right": 0.9316
+      }
+    }
+  ]
+}

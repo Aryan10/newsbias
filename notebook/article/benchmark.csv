@@ -1,0 +1,4 @@
+dataset,split,samples,model,accuracy,macro_f1,center_f1,left_f1,right_f1,center_precision,center_recall,left_precision,left_recall,right_precision,right_recall,status
+AllSides,Test (Frozen),5863,TF-IDF Baseline,0.7559,0.7517,0.7154,0.7609,0.7786,0.7671,0.6703,0.7779,0.7446,0.7315,0.8323,Baseline Benchmark
+AllSides,Test (Frozen),5863,HF Specialist (premsa/political-bias-prediction-allsides-DeBERTa),0.8062,0.7982,0.7332,0.8115,0.8498,0.8276,0.6581,0.7734,0.8535,0.8272,0.8738,HF Reference Model
+AllSides,Validation (Representative),1561,NewsBias Article (Hierarchical Ettin-400M Epoch 1),0.8943,0.8933,0.8841,0.8901,0.9057,0.9242,0.8472,0.8670,0.9144,0.9010,0.9103,Authoritative In-House Checkpoint

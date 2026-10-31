@@ -1,0 +1,12 @@
+{
+  "status": "validation",
+  "epoch": 0,
+  "batch_cursor": 20521,
+  "global_step": 1279,
+  "total_steps": 5132,
+  "best_macro_f1": null,
+  "history": [],
+  "fingerprint": "4baa651e003c570994a1cd5d8d9e80d91e1123e3d4820140cf9be437954bbb63",
+  "archive": "resume.zip",
+  "checkpoint_seconds": 21.89
+}
