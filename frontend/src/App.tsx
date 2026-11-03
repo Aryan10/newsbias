@@ -603,14 +603,7 @@ export default function App() {
             </span>
           </div>
           <div className="flex shrink-0 items-center gap-3">
-            <button
-              type="button"
-              id="about-btn"
-              onClick={() => setIsAboutOpen(true)}
-              className="text-xs font-mono font-medium text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:underline hover:decoration-slate-400 underline-offset-2 transition-colors cursor-pointer uppercase tracking-wider"
-            >
-              ABOUT
-            </button>
+            {/* ABOUT button hidden for now */}
             <button
               type="button"
               id="theme-toggle-btn"
@@ -1172,7 +1165,7 @@ export default function App() {
                 News Bias Detection using Machine Learning
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-                ...
+                An AI media bias detection, political stance classification, and neutral editorial rewriting system. Combines specialized transformer models with zero-shot LLM reasoning and an automated Arbiter consensus tribunal to deliver audited, AP-style revisions.
               </p>
             </div>
 
