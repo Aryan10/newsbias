@@ -12,7 +12,7 @@ from newsbias.models.llm import (
 from newsbias.models.openai import OpenAIChatClassifier
 from newsbias.models.political import (
     DEFAULT_ARTICLE_MODEL,
-    DEFAULT_IN_HOUSE_MODEL,
+    DEFAULT_FALLBACK_MODEL,
     predict_political_leaning,
     predict_political_leaning_mock,
 )
@@ -22,7 +22,7 @@ __all__ = [
     "ArticleConfig",
     "ArticleModel",
     "DEFAULT_ARTICLE_MODEL",
-    "DEFAULT_IN_HOUSE_MODEL",
+    "DEFAULT_FALLBACK_MODEL",
     "HuggingFaceSequenceClassifier",
     "Model",
     "OpenAIChatClassifier",

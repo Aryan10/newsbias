@@ -8,13 +8,8 @@ import functools
 import os
 from pathlib import Path
 
-DEFAULT_IN_HOUSE_MODEL = "/mnt/OS/newsbias-training/models/newsbias_sentence_full"
 DEFAULT_FALLBACK_MODEL = "mediabiasgroup/da-roberta-babe-ft"
-
-DEFAULT_SENTENCE_MODEL = os.getenv(
-    "SENTENCE_MODEL_PATH",
-    DEFAULT_IN_HOUSE_MODEL if Path(DEFAULT_IN_HOUSE_MODEL).is_dir() else DEFAULT_FALLBACK_MODEL,
-)
+DEFAULT_SENTENCE_MODEL = os.getenv("SENTENCE_MODEL_PATH", DEFAULT_FALLBACK_MODEL)
 
 
 @functools.lru_cache(maxsize=4)

@@ -396,7 +396,7 @@ export default function NewsFeed({
               <button
                 type="button"
                 aria-label="Refresh live news"
-                title="Refresh live news"
+                title="Load more live stories"
                 onClick={onRefresh}
                 disabled={isLoading}
                 className="shrink-0 rounded-lg border border-slate-200 dark:border-slate-700 p-1.5 text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-indigo-400 disabled:opacity-50 cursor-pointer"

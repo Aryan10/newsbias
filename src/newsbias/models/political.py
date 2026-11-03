@@ -16,13 +16,8 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_IN_HOUSE_MODEL = "/mnt/OS/newsbias-training/models/newsbias_article"
 DEFAULT_FALLBACK_MODEL = "premsa/political-bias-prediction-allsides-DeBERTa"
-
-DEFAULT_ARTICLE_MODEL = os.getenv(
-    "ARTICLE_MODEL_PATH",
-    DEFAULT_IN_HOUSE_MODEL if Path(DEFAULT_IN_HOUSE_MODEL).is_dir() else DEFAULT_FALLBACK_MODEL,
-)
+DEFAULT_ARTICLE_MODEL = os.getenv("ARTICLE_MODEL_PATH", DEFAULT_FALLBACK_MODEL)
 
 
 def _is_article_hierarchy(model_path: str) -> bool:

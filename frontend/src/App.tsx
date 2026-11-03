@@ -315,19 +315,31 @@ export default function App() {
     setImportedArticle(article);
   };
 
-  const fetchLiveNews = useCallback(async (refresh = false) => {
+  const [liveLimit, setLiveLimit] = useState<number>(5);
+
+  const fetchLiveNews = useCallback(async (isLoadMore = false) => {
     setIsLiveLoading(true);
-    if (refresh) setLiveStories([]);
+
+    const nextLimit = isLoadMore ? Math.min(liveLimit + 5, 15) : liveLimit;
+    if (isLoadMore) {
+      setLiveLimit(nextLimit);
+    }
 
     try {
-      const res = await fetch(`/bias/live-news/stream${refresh ? "?refresh=true" : ""}`);
+      const res = await fetch(`/bias/live-news/stream?limit=${nextLimit}${isLoadMore ? "&refresh=true" : ""}`);
       if (!res.ok) throw new Error("Could not load live news stream.");
 
       if (!res.body || !res.body.getReader) {
-        const jsonRes = await fetch(`/bias/live-news${refresh ? "?refresh=true" : ""}`);
+        const jsonRes = await fetch(`/bias/live-news?limit=${nextLimit}${isLoadMore ? "&refresh=true" : ""}`);
         if (!jsonRes.ok) throw new Error("Could not load live news.");
         const data = await jsonRes.json();
-        if (Array.isArray(data.stories)) setLiveStories(data.stories);
+        if (Array.isArray(data.stories)) {
+          setLiveStories((prev) => {
+            const existingIds = new Set(prev.map((s) => s.id));
+            const newStories = data.stories.filter((s: FeedStory) => !existingIds.has(s.id));
+            return [...prev, ...newStories];
+          });
+        }
         return;
       }
 
@@ -349,7 +361,11 @@ export default function App() {
           try {
             const chunk = JSON.parse(match[1]);
             if (chunk.cached && Array.isArray(chunk.stories)) {
-              setLiveStories(chunk.stories);
+              setLiveStories((prev) => {
+                const existingIds = new Set(prev.map((s) => s.id));
+                const newStories = chunk.stories.filter((s: FeedStory) => !existingIds.has(s.id));
+                return [...prev, ...newStories];
+              });
             } else if (Array.isArray(chunk.stories) && chunk.stories.length > 0) {
               setLiveStories((prev) => {
                 const existingIds = new Set(prev.map((s) => s.id));
@@ -364,10 +380,16 @@ export default function App() {
       }
     } catch {
       try {
-        const fallbackRes = await fetch(`/bias/live-news${refresh ? "?refresh=true" : ""}`);
+        const fallbackRes = await fetch(`/bias/live-news?limit=${nextLimit}${isLoadMore ? "&refresh=true" : ""}`);
         if (fallbackRes.ok) {
           const fallbackData = await fallbackRes.json();
-          if (Array.isArray(fallbackData.stories)) setLiveStories(fallbackData.stories);
+          if (Array.isArray(fallbackData.stories)) {
+            setLiveStories((prev) => {
+              const existingIds = new Set(prev.map((s) => s.id));
+              const newStories = fallbackData.stories.filter((s: FeedStory) => !existingIds.has(s.id));
+              return [...prev, ...newStories];
+            });
+          }
         }
       } catch {
         setError("Could not load live news feed. Provider may be temporarily unavailable.");
@@ -375,7 +397,7 @@ export default function App() {
     } finally {
       setIsLiveLoading(false);
     }
-  }, []);
+  }, [liveLimit]);
 
   useEffect(() => {
     fetchLiveNews(false);

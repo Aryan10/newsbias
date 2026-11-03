@@ -364,14 +364,14 @@ def get_bias_samples():
 @app.get("/bias/live-news")
 def get_live_news(refresh: bool = False, limit: int = 5):
     """Retrieve bounded live news stories from configured external news APIs."""
-    capped_limit = max(1, min(limit, 10))
+    capped_limit = max(1, min(limit, 15))
     return get_live_news_feed(limit_per_provider=capped_limit, force_refresh=refresh)
 
 
 @app.get("/bias/live-news/stream")
 async def get_live_news_stream(refresh: bool = False, limit: int = 5):
     """Progressive SSE stream yielding live stories as each provider returns."""
-    capped_limit = max(1, min(limit, 10))
+    capped_limit = max(1, min(limit, 15))
 
     async def stream_generator():
         cache_key = f"{','.join(sorted(ALL_PROVIDERS))}:{capped_limit}"
