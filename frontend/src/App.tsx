@@ -41,7 +41,7 @@ interface AnalysisData {
   language?: { code: string; name: string; confidence: number; status: string; transformers_supported: boolean };
   analysis_method?: string;
   input: { title?: string; text: string };
-  sentences: SentenceItem[];
+  sentences: SentenceItem[] | null;
   specialist_sentence: {
     status?: string;
     reason?: string;
@@ -50,7 +50,7 @@ interface AnalysisData {
     total_sentences: number;
     bias_ratio: number | null;
     flagged_sentences: SentenceItem[];
-  };
+  } | null;
   specialist_political: {
     status?: string;
     reason?: string;
@@ -59,13 +59,13 @@ interface AnalysisData {
     predicted_label: string;
     confidence: number | null;
     scores: Record<string, number>;
-  };
+  } | null;
   isolated_llm: {
     political_leaning?: { label: string; confidence?: number; scores?: Record<string, number> };
     linguistic_bias?: { label: string; is_biased: boolean; bias_score?: number };
     loaded_phrases?: string[];
     reasoning?: string;
-  };
+  } | null;
   arbiter: {
     final_verdict?: {
       is_biased: boolean;
@@ -78,7 +78,7 @@ interface AnalysisData {
     key_findings?: string[];
     specialist_synthesis?: Record<string, string>;
     suggest_rewrite_recommended?: boolean;
-  };
+  } | null;
 }
 
 interface RewriteChange {
@@ -271,7 +271,7 @@ export default function App() {
       analysisResultsRef.current?.focus({ preventScroll: true });
     });
     return () => cancelAnimationFrame(frame);
-  }, [analysis]);
+  }, [analysis ? 1 : 0]);
 
   const feedStories = useMemo<FeedStory[]>(() => samples.map((sample) => ({
     id: sample.id, title: sample.title, source: sample.source_name || sample.dataset,
@@ -387,7 +387,7 @@ export default function App() {
     setRewrite(null);
 
     try {
-      const res = await fetch("/bias/analyze", {
+      const res = await fetch("/bias/analyze/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title, text }),
@@ -398,8 +398,72 @@ export default function App() {
         throw new Error(errJson.detail || `Server error (${res.status})`);
       }
 
-      const data = await res.json();
-      if (revision === inputRevision.current) setAnalysis(data);
+      // Check if body stream reader is supported (or fallback for test mocks)
+      if (!res.body || !res.body.getReader) {
+        const data = await res.json();
+        if (revision === inputRevision.current) {
+          setAnalysis(data);
+          setIsAnalyzing(false);
+        }
+        return;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const blocks = buffer.split("\n\n");
+        buffer = blocks.pop() || "";
+
+        for (const block of blocks) {
+          if (!block.trim()) continue;
+          const match = block.match(/^data:\s*(.*)$/m);
+          if (!match) continue;
+          try {
+            const chunk = JSON.parse(match[1]);
+            if (revision !== inputRevision.current) return;
+
+            const defaultInitial: AnalysisData = {
+              input: { title, text },
+              sentences: null,
+              specialist_sentence: null,
+              specialist_political: null,
+              isolated_llm: null,
+              arbiter: null,
+            };
+
+            if (chunk.stage === "cached" || chunk.stage === "complete") {
+              setAnalysis(chunk.data);
+              setIsAnalyzing(false);
+            } else if (chunk.stage === "sentence_specialist") {
+              setAnalysis((prev: any) => ({
+                ...(prev || defaultInitial),
+                input: chunk.input || prev?.input || { title, text },
+                language: chunk.language || prev?.language,
+                sentences: chunk.sentences,
+                specialist_sentence: chunk.specialist_sentence,
+                analysis_method: chunk.analysis_method || prev?.analysis_method,
+              }));
+            } else if (chunk.stage === "political_specialist") {
+              setAnalysis((prev: any) => ({
+                ...(prev || defaultInitial),
+                specialist_political: chunk.specialist_political,
+              }));
+            } else if (chunk.stage === "isolated_llm") {
+              setAnalysis((prev: any) => ({
+                ...(prev || defaultInitial),
+                isolated_llm: chunk.isolated_llm,
+              }));
+            }
+          } catch (e) {
+            console.error("Failed to parse SSE line:", e);
+          }
+        }
+      }
     } catch (e: any) {
       if (revision === inputRevision.current) {
         setError(e.message || "Failed to analyze article bias.");
@@ -626,16 +690,31 @@ export default function App() {
                     Specialist Model
                   </span>
                 </div>
-                {analysis.specialist_sentence.status === "skipped" ? (
+                {!analysis.specialist_sentence ? (
+                  <div className="flex flex-col gap-2.5 mt-2" aria-busy="true" aria-label="Loading sentence bias analysis">
+                    <div className="flex items-baseline justify-between">
+                      <div className="h-6 w-20 rounded-md skeleton-shimmer" />
+                      <div className="h-5 w-16 rounded-full skeleton-shimmer" />
+                    </div>
+                    <div className="flex flex-col gap-1.5 mt-1">
+                      <div className="h-3 w-full rounded skeleton-shimmer" />
+                      <div className="h-3 w-4/5 rounded skeleton-shimmer" />
+                    </div>
+                    <div className="flex items-center gap-1.5 text-[11px] text-slate-400 dark:text-slate-500 font-mono mt-1">
+                      <RefreshCw className="h-3 w-3 animate-spin text-indigo-500 shrink-0" />
+                      <span>Detecting sentence-level spin...</span>
+                    </div>
+                  </div>
+                ) : analysis.specialist_sentence.status === "skipped" ? (
                   <SkippedSpecialist reason={analysis.specialist_sentence.reason} />
                 ) : <>
                 <div className="flex items-baseline justify-between mt-1">
                   <span className="text-2xl font-black text-slate-900 dark:text-slate-100">
-                    {Math.round(analysis.specialist_sentence.bias_ratio * 100)}%
+                    {Math.round((analysis.specialist_sentence.bias_ratio ?? 0) * 100)}%
                   </span>
                   <span
                     className={`text-xs px-2 py-0.5 rounded-full font-bold uppercase ${
-                      analysis.specialist_sentence.biased_sentence_count > 0
+                      (analysis.specialist_sentence.biased_sentence_count ?? 0) > 0
                         ? "bg-red-100 dark:bg-red-950/50 text-red-700 dark:text-red-400"
                         : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300"
                     }`}
@@ -644,7 +723,7 @@ export default function App() {
                   </span>
                 </div>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                  Flagged {analysis.specialist_sentence.biased_sentence_count} of{" "}
+                  Flagged {analysis.specialist_sentence.biased_sentence_count ?? 0} of{" "}
                   {analysis.specialist_sentence.total_sentences} sentences as carrying loaded spin.
                 </p>
                 </>}
@@ -658,7 +737,26 @@ export default function App() {
                     Specialist Model
                   </span>
                 </div>
-                {analysis.specialist_political.status === "skipped" ? (
+                {!analysis.specialist_political ? (
+                  <div className="flex flex-col gap-2.5 mt-2" aria-busy="true" aria-label="Loading political stance analysis">
+                    <div className="flex items-baseline justify-between">
+                      <div className="h-6 w-24 rounded-md skeleton-shimmer" />
+                      <div className="h-4 w-16 rounded-md skeleton-shimmer" />
+                    </div>
+                    <div className="flex flex-col gap-1.5 mt-1">
+                      <div className="h-2 w-full rounded-full skeleton-shimmer" />
+                      <div className="flex justify-between">
+                        <div className="h-3 w-10 rounded skeleton-shimmer" />
+                        <div className="h-3 w-10 rounded skeleton-shimmer" />
+                        <div className="h-3 w-10 rounded skeleton-shimmer" />
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 text-[11px] text-slate-400 dark:text-slate-500 font-mono mt-1">
+                      <RefreshCw className="h-3 w-3 animate-spin text-indigo-500 shrink-0" />
+                      <span>Classifying political stance...</span>
+                    </div>
+                  </div>
+                ) : analysis.specialist_political.status === "skipped" ? (
                   <SkippedSpecialist reason={analysis.specialist_political.reason} />
                 ) : <>
                 <div className="flex items-baseline justify-between mt-1">
@@ -666,7 +764,7 @@ export default function App() {
                     {analysis.specialist_political.predicted_label}
                   </span>
                   <span className="text-xs text-slate-500 dark:text-slate-400 font-mono">
-                    {Math.round(analysis.specialist_political.confidence * 100)}% conf
+                    {Math.round((analysis.specialist_political.confidence ?? 0) * 100)}% conf
                   </span>
                 </div>
                 {/* 3-way distribution bar */}
@@ -705,26 +803,46 @@ export default function App() {
                     Zero-Shot
                   </span>
                 </div>
-                <div className="flex items-baseline justify-between mt-1">
-                  <span className="text-xl font-bold uppercase tracking-tight text-slate-900 dark:text-slate-100">
-                    {analysis.isolated_llm?.political_leaning?.label || "Center"}
-                  </span>
-                  <span
-                    className={`text-xs px-2 py-0.5 rounded-full font-bold uppercase ${
-                      analysis.isolated_llm?.linguistic_bias?.is_biased
-                        ? "bg-red-100 dark:bg-red-950/50 text-red-700 dark:text-red-400"
-                        : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300"
-                    }`}
-                  >
-                    {analysis.isolated_llm?.linguistic_bias?.is_biased ? "Biased" : "Neutral"}
-                  </span>
-                </div>
-                <p
-                  className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed mt-1"
-                  title={analysis.isolated_llm?.reasoning || "Initial baseline assessment."}
-                >
-                  {analysis.isolated_llm?.reasoning || "Initial baseline assessment."}
-                </p>
+                {!analysis.isolated_llm ? (
+                  <div className="flex flex-col gap-2.5 mt-2" aria-busy="true" aria-label="Loading zero-shot LLM reading">
+                    <div className="flex items-baseline justify-between">
+                      <div className="h-6 w-20 rounded-md skeleton-shimmer" />
+                      <div className="h-5 w-16 rounded-full skeleton-shimmer" />
+                    </div>
+                    <div className="flex flex-col gap-1.5 mt-1">
+                      <div className="h-3 w-full rounded skeleton-shimmer" />
+                      <div className="h-3 w-5/6 rounded skeleton-shimmer" />
+                      <div className="h-3 w-3/5 rounded skeleton-shimmer" />
+                    </div>
+                    <div className="flex items-center gap-1.5 text-[11px] text-slate-400 dark:text-slate-500 font-mono mt-1">
+                      <RefreshCw className="h-3 w-3 animate-spin text-indigo-500 shrink-0" />
+                      <span>Zero-shot inference...</span>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex items-baseline justify-between mt-1">
+                      <span className="text-xl font-bold uppercase tracking-tight text-slate-900 dark:text-slate-100">
+                        {analysis.isolated_llm.political_leaning?.label || "Center"}
+                      </span>
+                      <span
+                        className={`text-xs px-2 py-0.5 rounded-full font-bold uppercase ${
+                          analysis.isolated_llm.linguistic_bias?.is_biased
+                            ? "bg-red-100 dark:bg-red-950/50 text-red-700 dark:text-red-400"
+                            : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300"
+                        }`}
+                      >
+                        {analysis.isolated_llm.linguistic_bias?.is_biased ? "Biased" : "Neutral"}
+                      </span>
+                    </div>
+                    <p
+                      className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed mt-1"
+                      title={analysis.isolated_llm.reasoning || "Initial baseline assessment."}
+                    >
+                      {analysis.isolated_llm.reasoning || "Initial baseline assessment."}
+                    </p>
+                  </>
+                )}
               </div>
             </div>
 
@@ -733,112 +851,163 @@ export default function App() {
               <div className="flex items-center justify-between mb-3 border-b border-slate-100 dark:border-slate-800 pb-2">
                 <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
                   <FileText className="h-3.5 w-3.5" />
-                  {analysis.specialist_sentence.status === "skipped" ? "Article text" : "Sentence-by-Sentence Spin Annotation"}
+                  {analysis.specialist_sentence?.status === "skipped" ? "Article text" : "Sentence-by-Sentence Spin Annotation"}
                 </span>
                 <span className="text-xs text-slate-400 dark:text-slate-500">
-                  {analysis.specialist_sentence.status === "skipped"
+                  {!analysis.sentences || !analysis.specialist_sentence
+                    ? "Segmenting sentences..."
+                    : analysis.specialist_sentence.status === "skipped"
                     ? "Sentence specialist not evaluated for this language"
                     : "Hover sentences to inspect specialist confidence"}
                 </span>
               </div>
               <div className="font-serif text-base leading-loose text-slate-900 dark:text-slate-100">
-                {analysis.specialist_sentence.status === "skipped" ? (
-                  <div className="whitespace-pre-wrap">{analysis.input.text}</div>
-                ) : analysis.sentences.map((s, idx) => (
-                  <span
-                    key={idx}
-                    title={s.is_biased ? `Sentence bias score: ${Math.round(s.score * 100)}% biased` : "Neutral sentence"}
-                    className={`px-1 py-0.5 rounded cursor-help transition-colors ${
-                      s.is_biased
-                        ? "bg-amber-100 dark:bg-amber-950/60 text-amber-950 dark:text-amber-200 border-b-2 border-amber-500 dark:border-amber-400 font-medium"
-                        : "text-slate-900 dark:text-slate-150 hover:bg-slate-100 dark:hover:bg-slate-800"
-                    }`}
-                  >
-                    {s.text}{" "}
-                  </span>
-                ))}
+                {!analysis.sentences || !analysis.specialist_sentence ? (
+                  <div className="whitespace-pre-wrap text-slate-700 dark:text-slate-300">
+                    {analysis.input?.text || text}
+                  </div>
+                ) : analysis.specialist_sentence.status === "skipped" ? (
+                  <div className="whitespace-pre-wrap">{analysis.input?.text || text}</div>
+                ) : (
+                  analysis.sentences.map((s, idx) => (
+                    <span
+                      key={idx}
+                      title={s.is_biased ? `Sentence bias score: ${Math.round((s.score ?? 0) * 100)}% biased` : "Neutral sentence"}
+                      className={`px-1 py-0.5 rounded cursor-help transition-colors ${
+                        s.is_biased
+                          ? "bg-amber-100 dark:bg-amber-950/60 text-amber-950 dark:text-amber-200 border-b-2 border-amber-500 dark:border-amber-400 font-medium"
+                          : "text-slate-900 dark:text-slate-150 hover:bg-slate-100 dark:hover:bg-slate-800"
+                      }`}
+                    >
+                      {s.text}{" "}
+                    </span>
+                  ))
+                )}
               </div>
             </div>
 
             {/* ── Arbiter Card: "Why is it (not) biased?" ───────────────────── */}
             <div className="border-2 border-indigo-500/40 dark:border-indigo-500/30 rounded-2xl p-6 bg-gradient-to-b from-white to-slate-50 dark:from-slate-900 dark:to-slate-900/90 shadow-md flex flex-col gap-5 transition-colors duration-200">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-4">
-                <div>
-                  <div className="text-xs font-semibold uppercase tracking-widest text-indigo-600 dark:text-indigo-400 mb-1">
-                    {analysis.analysis_method === "llm_only" ? "LLM Editorial Judgment" : "Arbiter Consensus Judgment"}
-                  </div>
-                  {/* Dynamic Heading based on verdict */}
-                  <h2 className="text-2xl font-extrabold tracking-tight text-slate-900 dark:text-white">
-                    {dynamicHeading}
-                  </h2>
-                </div>
-
-                <div className="flex items-center gap-3">
-                  <div className="text-right">
-                    <div className="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">
-                      {analysis.analysis_method === "llm_only" ? "LLM Stance" : "Consensus Stance"}
+              {!analysis.arbiter ? (
+                <div className="flex flex-col gap-5" aria-busy="true" aria-label="Synthesizing specialist consensus">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-4">
+                    <div className="flex flex-col gap-2">
+                      <div className="text-xs font-semibold uppercase tracking-widest text-indigo-600 dark:text-indigo-400">
+                        {analysis.analysis_method === "llm_only" ? "LLM Editorial Judgment" : "Arbiter Consensus Judgment"}
+                      </div>
+                      <div className="h-7 w-64 rounded-md skeleton-shimmer" />
                     </div>
-                    <div className="font-bold uppercase text-sm text-slate-900 dark:text-slate-100">
-                      {analysis.arbiter?.final_verdict?.overall_leaning || "Neutral"}
+                    <div className="flex items-center gap-3">
+                      <div className="flex flex-col items-end gap-1">
+                        <div className="h-3 w-20 rounded skeleton-shimmer" />
+                        <div className="h-4 w-16 rounded skeleton-shimmer" />
+                      </div>
+                      <div className="h-7 w-24 rounded-full skeleton-shimmer" />
                     </div>
                   </div>
-                  <span
-                    className={`text-sm px-3.5 py-1 rounded-full font-bold uppercase ${
-                      isBiased
-                        ? "bg-red-600 text-white"
-                        : "bg-slate-200 dark:bg-slate-800 text-slate-800 dark:text-slate-200"
-                    }`}
-                  >
-                    {isBiased ? "BIASED" : "NON-BIASED"}
-                  </span>
-                </div>
-              </div>
 
-              {/* Arbiter Explanation Text */}
-              <div className="text-sm leading-relaxed whitespace-pre-line text-slate-800 dark:text-slate-200 font-serif">
-                {analysis.arbiter?.why_biased_explanation ||
-                  "The arbiter evaluated all specialist signals to formulate this verdict."}
-              </div>
-
-              {/* Key Findings List */}
-              {analysis.arbiter?.key_findings && analysis.arbiter.key_findings.length > 0 && (
-                <div className="bg-slate-100/70 dark:bg-slate-800/60 p-4 rounded-xl flex flex-col gap-2">
-                  <span className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">
-                    Specific Evidence & Findings:
-                  </span>
-                  <ul className="list-disc list-inside text-xs space-y-1.5 text-slate-700 dark:text-slate-300">
-                    {analysis.arbiter.key_findings.map((f, i) => (
-                      <li key={i}>{f}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              {/* Action: Suggest Rewrite */}
-              {isBiased && (
-                <div className="border-t border-slate-200 dark:border-slate-800 pt-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                  <div className="text-xs text-slate-500 dark:text-slate-400">
-                    Biased rhetoric detected. Generate a factual, neutral AP/Reuters wire revision.
+                  {/* Arbiter Explanation Skeleton */}
+                  <div className="flex flex-col gap-2.5 py-1">
+                    <div className="h-4 w-full rounded skeleton-shimmer" />
+                    <div className="h-4 w-11/12 rounded skeleton-shimmer" />
+                    <div className="h-4 w-4/5 rounded skeleton-shimmer" />
+                    <div className="h-4 w-2/3 rounded skeleton-shimmer" />
                   </div>
-                  <button
-                    id="rewrite-btn"
-                    onClick={runRewrite}
-                    disabled={isRewriting}
-                    className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-sm cursor-pointer"
-                  >
-                    {isRewriting ? (
-                      <>
-                        <RefreshCw className="h-4 w-4 animate-spin" />
-                        Generating Neutral Revision...
-                      </>
-                    ) : (
-                      <>
-                        <Sparkles className="h-4 w-4" />
-                        Suggest Rewrite
-                      </>
-                    )}
-                  </button>
+
+                  {/* Findings Box Skeleton */}
+                  <div className="bg-slate-100/70 dark:bg-slate-800/60 p-4 rounded-xl flex flex-col gap-2.5">
+                    <div className="h-3.5 w-48 rounded skeleton-shimmer" />
+                    <div className="h-3 w-3/4 rounded skeleton-shimmer" />
+                    <div className="h-3 w-3/5 rounded skeleton-shimmer" />
+                  </div>
+
+                  {/* Arbiter loading status footer */}
+                  <div className="flex items-center gap-2 pt-2 border-t border-slate-100 dark:border-slate-800 text-xs font-medium text-indigo-600 dark:text-indigo-400">
+                    <RefreshCw className="h-4 w-4 animate-spin text-indigo-500 shrink-0" />
+                    <span>Supreme Arbiter synthesizing specialist signals and formulating verdict...</span>
+                  </div>
                 </div>
+              ) : (
+                <>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-4">
+                    <div>
+                      <div className="text-xs font-semibold uppercase tracking-widest text-indigo-600 dark:text-indigo-400 mb-1">
+                        {analysis.analysis_method === "llm_only" ? "LLM Editorial Judgment" : "Arbiter Consensus Judgment"}
+                      </div>
+                      {/* Dynamic Heading based on verdict */}
+                      <h2 className="text-2xl font-extrabold tracking-tight text-slate-900 dark:text-white">
+                        {dynamicHeading}
+                      </h2>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      <div className="text-right">
+                        <div className="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">
+                          {analysis.analysis_method === "llm_only" ? "LLM Stance" : "Consensus Stance"}
+                        </div>
+                        <div className="font-bold uppercase text-sm text-slate-900 dark:text-slate-100">
+                          {analysis.arbiter.final_verdict?.overall_leaning || "Neutral"}
+                        </div>
+                      </div>
+                      <span
+                        className={`text-sm px-3.5 py-1 rounded-full font-bold uppercase ${
+                          isBiased
+                            ? "bg-red-600 text-white"
+                            : "bg-slate-200 dark:bg-slate-800 text-slate-800 dark:text-slate-200"
+                        }`}
+                      >
+                        {isBiased ? "BIASED" : "NON-BIASED"}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Arbiter Explanation Text */}
+                  <div className="text-sm leading-relaxed whitespace-pre-line text-slate-800 dark:text-slate-200 font-serif">
+                    {analysis.arbiter.why_biased_explanation ||
+                      "The arbiter evaluated all specialist signals to formulate this verdict."}
+                  </div>
+
+                  {/* Key Findings List */}
+                  {analysis.arbiter.key_findings && analysis.arbiter.key_findings.length > 0 && (
+                    <div className="bg-slate-100/70 dark:bg-slate-800/60 p-4 rounded-xl flex flex-col gap-2">
+                      <span className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">
+                        Specific Evidence & Findings:
+                      </span>
+                      <ul className="list-disc list-inside text-xs space-y-1.5 text-slate-700 dark:text-slate-300">
+                        {analysis.arbiter.key_findings.map((f, i) => (
+                          <li key={i}>{f}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* Action: Suggest Rewrite */}
+                  {isBiased && (
+                    <div className="border-t border-slate-200 dark:border-slate-800 pt-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                      <div className="text-xs text-slate-500 dark:text-slate-400">
+                        Biased rhetoric detected. Generate a factual, neutral AP/Reuters wire revision.
+                      </div>
+                      <button
+                        id="rewrite-btn"
+                        onClick={runRewrite}
+                        disabled={isRewriting}
+                        className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-sm cursor-pointer"
+                      >
+                        {isRewriting ? (
+                          <>
+                            <RefreshCw className="h-4 w-4 animate-spin" />
+                            Generating Neutral Revision...
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles className="h-4 w-4" />
+                            Suggest Rewrite
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  )}
+                </>
               )}
             </div>
 

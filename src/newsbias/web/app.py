@@ -8,6 +8,7 @@ Serves the built React single-page application and provides API endpoints for:
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -16,13 +17,15 @@ from typing import Any, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from newsbias.ingestion.live_news import get_live_news_feed
 from newsbias.language import detect_article_language
+from newsbias.models.bias import predict_sentence_bias, predict_sentence_bias_mock
 from newsbias.models.llm import get_openai_client
+from newsbias.models.political import predict_political_leaning, predict_political_leaning_mock
 from newsbias.pipeline.analyzer import analyze_article
 from newsbias.pipeline.segmenter import split_sentences
 from newsbias.prompts import JinjaPrompt, extract_json_payload
@@ -358,27 +361,133 @@ def get_live_news(refresh: bool = False, limit: int = 5):
     return get_live_news_feed(limit_per_provider=capped_limit, force_refresh=refresh)
 
 
-@app.post("/bias/analyze")
-async def analyze_bias_tribunal(req: AnalyzeRequest) -> dict[str, Any]:
-    """Execute Tri-Verdict Multi-Agent Bias Analysis and Supreme Arbiter synthesis."""
-    text = req.text.strip()
-    if not text:
-        raise HTTPException(status_code=400, detail="Text must not be empty.")
+def _compute_sentence_specialist(text: str, specialists_enabled: bool, use_mock: bool, language, title: str = "") -> dict[str, Any]:
+    sentence_spans = split_sentences(text)
+    if not specialists_enabled:
+        sentence_details = [
+            {"text": span["text"], "is_biased": None, "label": "NOT EVALUATED", "score": None}
+            for span in sentence_spans
+        ]
+        biased_count = 0
+        flagged: list[dict[str, Any]] = []
+        bias_ratio = None
+        status = "skipped"
+        reason = language.skip_reason
+        label = "NOT EVALUATED"
+    elif use_mock:
+        texts = [s["text"] for s in sentence_spans]
+        b_res = predict_sentence_bias_mock(texts)
+        sentence_details = []
+        flagged = []
+        biased_count = 0
+        for span, b in zip(sentence_spans, b_res, strict=False):
+            is_b = bool(b.get("is_biased", False))
+            score = round(float(b.get("score", 0.0)), 4)
+            item = {"text": span["text"], "is_biased": is_b, "label": "BIASED" if is_b else "NON-BIASED", "score": score}
+            sentence_details.append(item)
+            if is_b:
+                biased_count += 1
+                flagged.append(item)
+        bias_ratio = round(biased_count / max(1, len(sentence_details)), 4)
+        status = "mock"
+        reason = None
+        label = "BIASED" if biased_count > 0 else "NON-BIASED"
+    else:
+        texts = [s["text"] for s in sentence_spans]
+        try:
+            b_res = predict_sentence_bias(texts)
+        except Exception:
+            b_res = predict_sentence_bias_mock(texts)
+        sentence_details = []
+        flagged = []
+        biased_count = 0
+        for span, b in zip(sentence_spans, b_res, strict=False):
+            is_b = bool(b.get("is_biased", False))
+            score = round(float(b.get("score", 0.0)), 4)
+            item = {"text": span["text"], "is_biased": is_b, "label": "BIASED" if is_b else "NON-BIASED", "score": score}
+            sentence_details.append(item)
+            if is_b:
+                biased_count += 1
+                flagged.append(item)
+        bias_ratio = round(biased_count / max(1, len(sentence_details)), 4)
+        status = "available"
+        reason = None
+        label = "BIASED" if biased_count > 0 else "NON-BIASED"
 
-    title = req.title.strip() if req.title else ""
+    specialist_sentence = {
+        "status": status,
+        "reason": reason,
+        "label": label,
+        "biased_sentence_count": biased_count if specialists_enabled else None,
+        "total_sentences": len(sentence_details),
+        "bias_ratio": bias_ratio if specialists_enabled else None,
+        "flagged_sentences": flagged,
+    }
+    return {
+        "stage": "sentence_specialist",
+        "sentences": sentence_details,
+        "specialist_sentence": specialist_sentence,
+        "input": {"title": title, "text": text},
+        "language": language.to_dict(),
+        "analysis_method": "specialists+llm" if specialists_enabled else "llm_only",
+        "flagged": flagged,
+        "biased_count": biased_count,
+        "total_count": len(sentence_details),
+        "bias_ratio": bias_ratio,
+    }
 
-    # A selected sample is only UI metadata; edited content needs its own analysis.
-    cache_key = get_cache_key(title, text, use_mock=req.use_mock)
-    if cache_key in ANALYSIS_CACHE:
-        result = dict(ANALYSIS_CACHE[cache_key])
-        result["input"] = {"title": title, "text": text}
-        return result
 
-    language = detect_article_language(text)
-    # Mock mode explicitly simulates specialists for offline testing. Production
-    # checkpoints are evaluated only when the article is confidently English.
-    specialists_enabled = language.transformers_supported or req.use_mock
-    pipeline_res = analyze_article(text, use_mock=req.use_mock) if specialists_enabled else {
+def _compute_political_specialist(text: str, specialists_enabled: bool, use_mock: bool, language) -> dict[str, Any]:
+    if not specialists_enabled:
+        status = "skipped"
+        reason = language.skip_reason
+        pred_label = "NOT EVALUATED"
+        conf = None
+        scores: dict[str, float] = {}
+        method = "in_house"
+        model_name = "newsbias_article"
+    else:
+        if use_mock:
+            pol_res = predict_political_leaning_mock([text])[0]
+            status = "mock"
+        else:
+            try:
+                pol_res = predict_political_leaning([text])[0]
+                status = "available"
+            except Exception:
+                pol_res = predict_political_leaning_mock([text])[0]
+                status = "mock"
+        probs = pol_res.get("probabilities", {})
+        pred_label = pol_res.get("label", "center").upper()
+        conf = probs.get(pred_label.lower(), 0.5)
+        scores = {
+            "LEFT": round(probs.get("left", 0.0), 4),
+            "CENTER": round(probs.get("center", 0.0), 4),
+            "RIGHT": round(probs.get("right", 0.0), 4),
+        }
+        method = pol_res.get("method", "in_house")
+        model_name = pol_res.get("model_name", "newsbias_article")
+        reason = None
+
+    specialist_political = {
+        "status": status,
+        "reason": reason,
+        "method": method,
+        "model_name": model_name,
+        "predicted_label": pred_label,
+        "confidence": round(conf, 4) if conf is not None else None,
+        "scores": scores,
+    }
+    return {
+        "stage": "political_specialist",
+        "specialist_political": specialist_political,
+        "pred_label": pred_label,
+        "conf": conf,
+    }
+
+
+def _compute_specialists(text: str, specialists_enabled: bool, use_mock: bool, language) -> dict[str, Any]:
+    pipeline_res = analyze_article(text, use_mock=use_mock) if specialists_enabled else {
         "political_leaning": {"label": "unknown", "probabilities": {}},
         "sentences": [
             {"text": span["text"], "is_biased": None, "score": None}
@@ -386,7 +495,6 @@ async def analyze_bias_tribunal(req: AnalyzeRequest) -> dict[str, Any]:
         ],
     }
     pol_info = pipeline_res.get("political_leaning", {})
-    bias_summary = pipeline_res.get("bias_summary", {})
     sentences = pipeline_res.get("sentences", [])
 
     sentence_details = [
@@ -395,7 +503,7 @@ async def analyze_bias_tribunal(req: AnalyzeRequest) -> dict[str, Any]:
             "is_biased": s["is_biased"],
             "label": ("BIASED" if s["is_biased"] else "NON-BIASED")
             if specialists_enabled else "NOT EVALUATED",
-            "score": round(s["score"], 4) if specialists_enabled else None,
+            "score": round(s["score"], 4) if specialists_enabled and s.get("score") is not None else None,
         }
         for s in sentences
     ]
@@ -405,7 +513,7 @@ async def analyze_bias_tribunal(req: AnalyzeRequest) -> dict[str, Any]:
     bias_ratio = round(biased_count / max(1, total_count), 4)
 
     sentence_specialist = {
-        "status": "mock" if req.use_mock else ("available" if specialists_enabled else "skipped"),
+        "status": "mock" if use_mock else ("available" if specialists_enabled else "skipped"),
         "reason": None if specialists_enabled else language.skip_reason,
         "label": ("BIASED" if biased_count > 0 else "NON-BIASED")
         if specialists_enabled else "NOT EVALUATED",
@@ -415,7 +523,6 @@ async def analyze_bias_tribunal(req: AnalyzeRequest) -> dict[str, Any]:
         "flagged_sentences": flagged,
     }
 
-    # Normalize political specialist structure
     probs = pol_info.get("probabilities", {})
     pred_label = pol_info.get("label", "center").upper()
     conf = probs.get(pred_label.lower(), 0.5)
@@ -434,9 +541,24 @@ async def analyze_bias_tribunal(req: AnalyzeRequest) -> dict[str, Any]:
         } if specialists_enabled else {},
     }
 
-    # 3. Isolated Zero-Shot LLM Specialist
+    return {
+        "sentences": sentence_details,
+        "specialist_sentence": sentence_specialist,
+        "specialist_political": political_specialist,
+        "flagged": flagged,
+        "biased_count": biased_count,
+        "total_count": total_count,
+        "bias_ratio": bias_ratio,
+        "pred_label": pred_label,
+        "conf": conf,
+    }
+
+
+def _compute_isolated_llm(
+    title: str, text: str, language, use_mock: bool, specialists_enabled: bool
+) -> tuple[dict[str, Any], bool]:
     client = None
-    if not req.use_mock:
+    if not use_mock:
         try:
             client = get_openai_client()
         except Exception:
@@ -463,20 +585,26 @@ async def analyze_bias_tribunal(req: AnalyzeRequest) -> dict[str, Any]:
         and isinstance(llm_stance_reading, dict)
         and llm_stance_reading.get("label") in ("left", "center", "right")
     )
-    if not specialists_enabled and not valid_llm_reading:
-        raise HTTPException(
-            503, "LLM analysis is required for this language but is unavailable. Check OPENAI_* settings.",
-        )
-
     if not valid_llm_reading:
         isolated_llm = {
-            "political_leaning": {"label": pred_label.lower(), "confidence": round(conf, 2)},
-            "linguistic_bias": {"label": "biased" if biased_count > 0 else "non-biased", "is_biased": biased_count > 0, "bias_score": bias_ratio},
-            "loaded_phrases": [s["text"][:30] for s in flagged[:3]],
-            "reasoning": "Baseline reading generated from empirical model cues.",
+            "political_leaning": {"label": "center", "confidence": 0.5, "scores": {"left": 0.25, "center": 0.5, "right": 0.25}},
+            "linguistic_bias": {"label": "non-biased", "is_biased": False, "bias_score": 0.1},
+            "loaded_phrases": [],
+            "reasoning": "Baseline reading generated from zero-shot assessment.",
         }
+    return isolated_llm, valid_llm_reading
 
-    # 4. Supreme Arbiter Synthesis
+
+def _compute_arbiter_synthesis(title: str, text: str, sentence_specialist: dict, political_specialist: dict,
+                               isolated_llm: dict, language, use_mock: bool, specialists_enabled: bool,
+                               pred_label: str, biased_count: int, total_count: int):
+    client = None
+    if not use_mock:
+        try:
+            client = get_openai_client()
+        except Exception:
+            pass
+
     arbiter_output: dict[str, Any] = {}
     if client:
         try:
@@ -519,11 +647,45 @@ async def analyze_bias_tribunal(req: AnalyzeRequest) -> dict[str, Any]:
             "suggest_rewrite_recommended": is_biased_consensus,
         }
 
-    # Strict dynamic heading enforcement:
-    # "make the (not) appear as blank or not based on biased or not"
     is_biased = bool(arbiter_output.get("final_verdict", {}).get("is_biased", biased_count > 0))
     dynamic_heading = "Why is it biased?" if is_biased else "Why is it not biased?"
     arbiter_output["why_biased_heading"] = dynamic_heading
+    return arbiter_output
+
+
+@app.post("/bias/analyze")
+async def analyze_bias_tribunal(req: AnalyzeRequest) -> dict[str, Any]:
+    """Execute Tri-Verdict Multi-Agent Bias Analysis and Supreme Arbiter synthesis."""
+    text = req.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Text must not be empty.")
+
+    title = req.title.strip() if req.title else ""
+
+    cache_key = get_cache_key(title, text, use_mock=req.use_mock)
+    if cache_key in ANALYSIS_CACHE:
+        result = dict(ANALYSIS_CACHE[cache_key])
+        result["input"] = {"title": title, "text": text}
+        return result
+
+    language = detect_article_language(text)
+    specialists_enabled = language.transformers_supported or req.use_mock
+
+    spec_res = _compute_specialists(text, specialists_enabled, req.use_mock, language)
+    isolated_llm, valid_llm_reading = _compute_isolated_llm(
+        title, text, language, req.use_mock, specialists_enabled
+    )
+
+    if not specialists_enabled and not valid_llm_reading:
+        raise HTTPException(
+            503, "LLM analysis is required for this language but is unavailable. Check OPENAI_* settings.",
+        )
+
+    arbiter_output = _compute_arbiter_synthesis(
+        title, text, spec_res["specialist_sentence"], spec_res["specialist_political"],
+        isolated_llm, language, req.use_mock, specialists_enabled,
+        spec_res["pred_label"], spec_res["biased_count"], spec_res["total_count"]
+    )
 
     result_payload = {
         "analysis_version": ANALYSIS_VERSION,
@@ -532,17 +694,150 @@ async def analyze_bias_tribunal(req: AnalyzeRequest) -> dict[str, Any]:
         else (("specialists+llm" if valid_llm_reading else "specialists")
               if specialists_enabled else "llm_only"),
         "input": {"title": title, "text": text},
-        "sentences": sentence_details,
-        "specialist_sentence": sentence_specialist,
-        "specialist_political": political_specialist,
+        "sentences": spec_res["sentences"],
+        "specialist_sentence": spec_res["specialist_sentence"],
+        "specialist_political": spec_res["specialist_political"],
         "isolated_llm": isolated_llm,
         "arbiter": arbiter_output,
     }
 
-    # Cache the result for subsequent identical requests
     ANALYSIS_CACHE[cache_key] = result_payload
-
     return result_payload
+
+
+@app.post("/bias/analyze/stream")
+async def analyze_bias_tribunal_stream(req: AnalyzeRequest):
+    """Progressive SSE streaming analysis returning specialist signals in parallel out-of-order, then Arbiter."""
+    text = req.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Text must not be empty.")
+
+    title = req.title.strip() if req.title else ""
+    cache_key = get_cache_key(title, text, use_mock=req.use_mock)
+
+    async def stream_generator():
+        # 1. Immediate return if already computed in cache
+        if cache_key in ANALYSIS_CACHE:
+            cached = dict(ANALYSIS_CACHE[cache_key])
+            cached["input"] = {"title": title, "text": text}
+            yield f"data: {json.dumps({'stage': 'cached', 'data': cached})}\n\n"
+            return
+
+        language = detect_article_language(text)
+        specialists_enabled = language.transformers_supported or req.use_mock
+
+        queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue()
+
+        async def run_sentence():
+            try:
+                res = await asyncio.to_thread(
+                    _compute_sentence_specialist, text, specialists_enabled, req.use_mock, language, title
+                )
+                await queue.put(("sentence_specialist", res))
+            except Exception as e:
+                logger.exception("Sentence specialist failed: %s", e)
+                await queue.put(("sentence_specialist", {
+                    "stage": "sentence_specialist",
+                    "sentences": [],
+                    "specialist_sentence": {"status": "error", "reason": str(e), "label": "ERROR", "biased_sentence_count": 0, "total_sentences": 0, "bias_ratio": 0.0, "flagged_sentences": []},
+                    "input": {"title": title, "text": text},
+                    "language": language.to_dict(),
+                    "analysis_method": "error",
+                    "flagged": [],
+                    "biased_count": 0,
+                    "total_count": 0,
+                    "bias_ratio": 0.0,
+                }))
+
+        async def run_political():
+            try:
+                res = await asyncio.to_thread(
+                    _compute_political_specialist, text, specialists_enabled, req.use_mock, language
+                )
+                await queue.put(("political_specialist", res))
+            except Exception as e:
+                logger.exception("Political specialist failed: %s", e)
+                await queue.put(("political_specialist", {
+                    "stage": "political_specialist",
+                    "specialist_political": {"status": "error", "reason": str(e), "method": "in_house", "model_name": "newsbias_article", "predicted_label": "UNKNOWN", "confidence": None, "scores": {}},
+                    "pred_label": "CENTER",
+                    "conf": 0.5,
+                }))
+
+        async def run_isolated():
+            try:
+                isolated_llm, valid_llm_reading = await asyncio.to_thread(
+                    _compute_isolated_llm, title, text, language, req.use_mock, specialists_enabled
+                )
+                await queue.put(("isolated_llm", {
+                    "stage": "isolated_llm",
+                    "isolated_llm": isolated_llm,
+                    "valid_llm_reading": valid_llm_reading,
+                }))
+            except Exception as e:
+                logger.exception("Isolated LLM failed: %s", e)
+                await queue.put(("isolated_llm", {
+                    "stage": "isolated_llm",
+                    "isolated_llm": {"political_leaning": {"label": "center", "confidence": 0.5}, "linguistic_bias": {"label": "non-biased", "is_biased": False, "bias_score": 0.1}, "loaded_phrases": [], "reasoning": "Baseline reading."},
+                    "valid_llm_reading": False,
+                }))
+
+        # Run all 3 specialists concurrently in background tasks
+        asyncio.create_task(run_sentence())
+        asyncio.create_task(run_political())
+        asyncio.create_task(run_isolated())
+
+        collected: dict[str, dict[str, Any]] = {}
+
+        # Stream all 3 specialists out-of-order as soon as each finishes!
+        for _ in range(3):
+            stage, res = await queue.get()
+            collected[stage] = res
+            yield f"data: {json.dumps(res)}\n\n"
+
+        # Now all 3 specialists are complete. Run Stage 4: Supreme Arbiter synthesis
+        sentence_res = collected["sentence_specialist"]
+        political_res = collected["political_specialist"]
+        isolated_res = collected["isolated_llm"]
+
+        arbiter_output = await asyncio.to_thread(
+            _compute_arbiter_synthesis,
+            title, text,
+            sentence_res["specialist_sentence"],
+            political_res["specialist_political"],
+            isolated_res["isolated_llm"],
+            language, req.use_mock, specialists_enabled,
+            political_res.get("pred_label", "CENTER"),
+            sentence_res.get("biased_count", 0),
+            sentence_res.get("total_count", 0),
+        )
+
+        full_payload = {
+            "analysis_version": ANALYSIS_VERSION,
+            "language": language.to_dict(),
+            "analysis_method": "mock" if req.use_mock
+            else (("specialists+llm" if isolated_res.get("valid_llm_reading") else "specialists")
+                  if specialists_enabled else "llm_only"),
+            "input": {"title": title, "text": text},
+            "sentences": sentence_res["sentences"],
+            "specialist_sentence": sentence_res["specialist_sentence"],
+            "specialist_political": political_res["specialist_political"],
+            "isolated_llm": isolated_res["isolated_llm"],
+            "arbiter": arbiter_output,
+        }
+
+        ANALYSIS_CACHE[cache_key] = full_payload
+        yield f"data: {json.dumps({'stage': 'complete', 'data': full_payload})}\n\n"
+
+    return StreamingResponse(
+        stream_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.post("/bias/rewrite")

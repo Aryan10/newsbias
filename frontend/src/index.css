@@ -197,4 +197,32 @@ body {
     -ms-overflow-style: none;
     scrollbar-width: none;
   }
+  @keyframes shimmer {
+    0% {
+      background-position: -200% 0;
+    }
+    100% {
+      background-position: 200% 0;
+    }
+  }
+  .skeleton-shimmer {
+    background: linear-gradient(
+      90deg,
+      #e2e8f0 0%,
+      #f8fafc 50%,
+      #e2e8f0 100%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.6s infinite ease-in-out;
+  }
+  .dark .skeleton-shimmer {
+    background: linear-gradient(
+      90deg,
+      #1e293b 0%,
+      #334155 50%,
+      #1e293b 100%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.6s infinite ease-in-out;
+  }
 }

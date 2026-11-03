@@ -51,6 +51,34 @@ def test_analyze_endpoint_mock(client):
     assert heading in ["Why is it biased?", "Why is it not biased?"]
 
 
+def test_analyze_stream_endpoint_mock(client):
+    """Ensure SSE streaming returns progressive chunks (sentence, political, isolated_llm, complete)."""
+    import json
+    payload = {
+        "text": "Unique fresh text for streaming evaluation.",
+        "title": "Stream Fresh",
+        "use_mock": True,
+    }
+    response = client.post("/bias/analyze/stream", json=payload)
+    assert response.status_code == 200
+    assert "text/event-stream" in response.headers.get("content-type", "")
+
+    chunks = []
+    for line in response.text.split("\n\n"):
+        if line.startswith("data: "):
+            chunks.append(json.loads(line[6:]))
+
+    assert len(chunks) == 4
+    stages = [c["stage"] for c in chunks]
+    assert set(stages[:3]) == {"sentence_specialist", "political_specialist", "isolated_llm"}
+    assert stages[3] == "complete"
+    chunk_by_stage = {c["stage"]: c for c in chunks[:3]}
+    assert "sentences" in chunk_by_stage["sentence_specialist"]
+    assert "specialist_political" in chunk_by_stage["political_specialist"]
+    assert "isolated_llm" in chunk_by_stage["isolated_llm"]
+    assert "arbiter" in chunks[3]["data"]
+
+
 def test_serve_index(client):
     """Ensure root path serves the built React frontend application."""
     response = client.get("/")
