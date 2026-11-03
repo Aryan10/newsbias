@@ -185,7 +185,7 @@ export default function ArticleInputTabs({
                 <label htmlFor="article-file-input" className="text-sm font-semibold">Upload a text document</label>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
                   Currently supports .txt files (UTF-8 or UTF-16), up to 1 MB.
-                  More document and image formats will be added here.
+                  More document and image formats will be added later.
                 </p>
                 <input id="article-file-input" type="file" accept=".txt,text/plain"
                   onChange={(event) => { cancelExtraction(); setFile(event.target.files?.[0] ?? null); }}
@@ -194,9 +194,6 @@ export default function ArticleInputTabs({
               </div>
             )}
             <div className="import-actions sticky bottom-0 z-10 bg-white dark:bg-slate-900 flex flex-wrap items-center justify-between gap-3">
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                Extract first, then review or edit the original wording in Article before analyzing.
-              </p>
               <button type="button" onClick={extract} disabled={!canExtract || isExtracting}
                 className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer ml-auto">
                 {isExtracting ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}

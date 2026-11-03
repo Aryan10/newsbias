@@ -69,17 +69,19 @@ describe("Newsfeed", () => {
   it("loads a feed story into Article without automatically analyzing it", async () => {
     const sample = { id: "provider-independent", title: "A new article", text: "Full original article body.",
       dataset: "Example corpus", category: "Example", source_name: "Public Wire", source_url: "https://news.example/article" };
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => [sample] });
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+      if (url === "/bias/samples") return { ok: true, json: async () => [sample] };
+      return { ok: true, json: async () => ({ stories: [] }) };
+    });
     vi.stubGlobal("fetch", fetchMock);
     render(<App />);
+    fireEvent.click(screen.getByRole("tab", { name: "Curated" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Open article: A new article" })).toBeTruthy());
     fireEvent.click(screen.getByRole("tab", { name: "Raw" }));
     fireEvent.click(screen.getByRole("button", { name: "Open article: A new article" }));
     await waitFor(() => expect(screen.getByRole("tab", { name: "Article" }).getAttribute("aria-selected")).toBe("true"));
     expect(screen.getByDisplayValue("A new article")).toBeTruthy();
     expect(screen.getByDisplayValue("Full original article body.")).toBeTruthy();
-    expect(fetchMock).toHaveBeenCalledOnce();
-    expect(fetchMock.mock.calls[0][0]).toBe("/bias/samples");
   });
 
   it("supports switching between Curated and Live collections and shows refresh button", () => {
@@ -175,7 +177,7 @@ describe("Newsfeed", () => {
       if (url === "/bias/samples") {
         return { ok: true, json: async () => [curatedSample] };
       }
-      if (url === "/bias/live-news") {
+      if (url.startsWith("/bias/live-news")) {
         return {
           ok: true,
           json: async () => ({
@@ -194,16 +196,8 @@ describe("Newsfeed", () => {
 
     render(<App />);
 
-    // Initial load fetches /bias/samples
-    await waitFor(() => expect(screen.getByRole("button", { name: "Open article: Curated Sample Title" })).toBeTruthy());
-
-    // Switch to Live collection
-    const liveTab = screen.getByRole("tab", { name: "Live" });
-    fireEvent.click(liveTab);
-
-    // Live news request is fired
+    // Initial load defaults to Live collection
     await waitFor(() => expect(screen.getByRole("button", { name: "Open article: Live Breaking News Headline" })).toBeTruthy());
-    expect(fetchMock).toHaveBeenCalledWith("/bias/live-news");
 
     // Click "Open article" for the live story
     fireEvent.click(screen.getByRole("button", { name: "Open article: Live Breaking News Headline" }));

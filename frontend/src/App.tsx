@@ -206,9 +206,9 @@ const DEFAULT_SAMPLES: SampleItem[] = [
 
 export default function App() {
   const [samples, setSamples] = useState<SampleItem[]>(DEFAULT_SAMPLES);
-  const [title, setTitle] = useState(DEFAULT_SAMPLES[0].title);
-  const [text, setText] = useState(DEFAULT_SAMPLES[0].text);
-  const [activeSampleId, setActiveSampleId] = useState<string | null>(DEFAULT_SAMPLES[0].id);
+  const [title, setTitle] = useState("");
+  const [text, setText] = useState("");
+  const [activeSampleId, setActiveSampleId] = useState<string | null>(null);
   const inputRevision = useRef(0);
   const inputEditorRef = useRef<HTMLDivElement>(null);
   const articleTitleRef = useRef<HTMLInputElement>(null);
@@ -216,7 +216,7 @@ export default function App() {
   const [selectedPresetRevision, setSelectedPresetRevision] = useState(0);
   const [importedArticle, setImportedArticle] = useState<ImportedArticle | null>(null);
 
-  const [feedCollection, setFeedCollection] = useState<"curated" | "live">("curated");
+  const [feedCollection, setFeedCollection] = useState<"curated" | "live">("live");
   const [liveStories, setLiveStories] = useState<FeedStory[]>([]);
   const [isLiveLoading, setIsLiveLoading] = useState(false);
   const [extractingLiveStoryId, setExtractingLiveStoryId] = useState<string | null>(null);
@@ -317,19 +317,69 @@ export default function App() {
 
   const fetchLiveNews = useCallback(async (refresh = false) => {
     setIsLiveLoading(true);
+    if (refresh) setLiveStories([]);
+
     try {
-      const res = await fetch(`/bias/live-news${refresh ? "?refresh=true" : ""}`);
-      if (!res.ok) throw new Error("Could not load live news.");
-      const data = await res.json();
-      if (Array.isArray(data.stories)) {
-        setLiveStories(data.stories);
+      const res = await fetch(`/bias/live-news/stream${refresh ? "?refresh=true" : ""}`);
+      if (!res.ok) throw new Error("Could not load live news stream.");
+
+      if (!res.body || !res.body.getReader) {
+        const jsonRes = await fetch(`/bias/live-news${refresh ? "?refresh=true" : ""}`);
+        if (!jsonRes.ok) throw new Error("Could not load live news.");
+        const data = await jsonRes.json();
+        if (Array.isArray(data.stories)) setLiveStories(data.stories);
+        return;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const blocks = buffer.split("\n\n");
+        buffer = blocks.pop() || "";
+
+        for (const block of blocks) {
+          if (!block.trim()) continue;
+          const match = block.match(/^data:\s*(.*)$/m);
+          if (!match) continue;
+          try {
+            const chunk = JSON.parse(match[1]);
+            if (chunk.cached && Array.isArray(chunk.stories)) {
+              setLiveStories(chunk.stories);
+            } else if (Array.isArray(chunk.stories) && chunk.stories.length > 0) {
+              setLiveStories((prev) => {
+                const existingIds = new Set(prev.map((s) => s.id));
+                const newStories = chunk.stories.filter((s: FeedStory) => !existingIds.has(s.id));
+                return [...prev, ...newStories];
+              });
+            }
+          } catch (e) {
+            console.error("Failed to parse live news chunk:", e);
+          }
+        }
       }
     } catch {
-      setError("Could not load live news feed. Provider may be temporarily unavailable.");
+      try {
+        const fallbackRes = await fetch(`/bias/live-news${refresh ? "?refresh=true" : ""}`);
+        if (fallbackRes.ok) {
+          const fallbackData = await fallbackRes.json();
+          if (Array.isArray(fallbackData.stories)) setLiveStories(fallbackData.stories);
+        }
+      } catch {
+        setError("Could not load live news feed. Provider may be temporarily unavailable.");
+      }
     } finally {
       setIsLiveLoading(false);
     }
   }, []);
+
+  useEffect(() => {
+    fetchLiveNews(false);
+  }, [fetchLiveNews]);
 
   const handleSelectCollection = (col: "curated" | "live") => {
     setFeedCollection(col);

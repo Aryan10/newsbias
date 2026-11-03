@@ -79,6 +79,24 @@ def test_analyze_stream_endpoint_mock(client):
     assert "arbiter" in chunks[3]["data"]
 
 
+def test_live_news_stream_endpoint(client):
+    """Ensure SSE live news stream returns chunks or cached stories."""
+    import json
+    response = client.get("/bias/live-news/stream")
+    assert response.status_code == 200
+    assert "text/event-stream" in response.headers.get("content-type", "")
+
+    chunks = []
+    for line in response.text.split("\n\n"):
+        if line.startswith("data: "):
+            chunks.append(json.loads(line[6:]))
+
+    assert len(chunks) >= 1
+    # Check that chunks contain either stories or done marker
+    has_stories_or_done = any("stories" in c or c.get("done") for c in chunks)
+    assert has_stories_or_done
+
+
 def test_serve_index(client):
     """Ensure root path serves the built React frontend application."""
     response = client.get("/")

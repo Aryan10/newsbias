@@ -12,6 +12,7 @@ import asyncio
 import hashlib
 import json
 import logging
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Optional
 
@@ -21,7 +22,13 @@ from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from newsbias.ingestion.live_news import get_live_news_feed
+from newsbias.ingestion.live_news import (
+    ALL_PROVIDERS,
+    GLOBAL_LIVE_NEWS_CACHE,
+    PROVIDER_FETCHERS,
+    get_live_news_feed,
+    get_provider_keys,
+)
 from newsbias.language import detect_article_language
 from newsbias.models.bias import predict_sentence_bias, predict_sentence_bias_mock
 from newsbias.models.llm import get_openai_client
@@ -359,6 +366,78 @@ def get_live_news(refresh: bool = False, limit: int = 5):
     """Retrieve bounded live news stories from configured external news APIs."""
     capped_limit = max(1, min(limit, 10))
     return get_live_news_feed(limit_per_provider=capped_limit, force_refresh=refresh)
+
+
+@app.get("/bias/live-news/stream")
+async def get_live_news_stream(refresh: bool = False, limit: int = 5):
+    """Progressive SSE stream yielding live stories as each provider returns."""
+    capped_limit = max(1, min(limit, 10))
+
+    async def stream_generator():
+        cache_key = f"{','.join(sorted(ALL_PROVIDERS))}:{capped_limit}"
+        if not refresh:
+            cached = GLOBAL_LIVE_NEWS_CACHE.get(cache_key)
+            if cached is not None:
+                yield f"data: {json.dumps({'cached': True, 'stories': cached['stories'], 'total': len(cached['stories'])})}\n\n"
+                return
+
+        keys = get_provider_keys()
+        configured = [p for p in ALL_PROVIDERS if keys.get(p)]
+        if not configured:
+            yield f"data: {json.dumps({'stories': [], 'total': 0, 'done': True, 'unconfigured': True})}\n\n"
+            return
+
+        queue: asyncio.Queue[tuple[str, list[dict[str, Any]], str | None]] = asyncio.Queue()
+
+        async def fetch_one(provider: str, api_key: str):
+            fetcher = PROVIDER_FETCHERS.get(provider)
+            if not fetcher:
+                await queue.put((provider, [], "unsupported"))
+                return
+            try:
+                stories = await asyncio.to_thread(fetcher, api_key, capped_limit, 8.0)
+                await queue.put((provider, stories, None))
+            except Exception as e:
+                logger.warning("Live provider %s failed: %s", provider, type(e).__name__)
+                await queue.put((provider, [], type(e).__name__))
+
+        for p in configured:
+            asyncio.create_task(fetch_one(p, keys[p]))
+
+        all_collected_stories: list[dict[str, Any]] = []
+        provider_status: dict[str, Any] = {}
+
+        for _ in range(len(configured)):
+            p, stories, err = await queue.get()
+            provider_status[p] = {"status": "ok" if err is None else "error", "count": len(stories)}
+            if stories:
+                all_collected_stories.extend(stories)
+                yield f"data: {json.dumps({'provider': p, 'stories': stories, 'status': 'ok'})}\n\n"
+
+        def sort_key(s: dict[str, Any]) -> str:
+            return str(s.get("publishedAt") or "")
+
+        all_collected_stories.sort(key=sort_key, reverse=True)
+
+        result_payload = {
+            "stories": all_collected_stories,
+            "providers": provider_status,
+            "cached": False,
+            "total": len(all_collected_stories),
+            "updated_at": datetime.now(UTC).isoformat(),
+        }
+        GLOBAL_LIVE_NEWS_CACHE.set(cache_key, result_payload)
+        yield f"data: {json.dumps({'done': True, 'total': len(all_collected_stories)})}\n\n"
+
+    return StreamingResponse(
+        stream_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 def _compute_sentence_specialist(text: str, specialists_enabled: bool, use_mock: bool, language, title: str = "") -> dict[str, Any]:

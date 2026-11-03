@@ -44,6 +44,9 @@ it("focuses and scrolls to results only after the accepted analysis completes", 
     ? Promise.resolve({ ok: true, json: async () => [] })
     : new Promise((resolve) => { finish = resolve; })));
   render(<App />);
+  fireEvent.change(screen.getByPlaceholderText("Paste article text here..."), {
+    target: { value: "The council announced a vote." },
+  });
   fireEvent.click(screen.getByRole("button", { name: "Analyze Bias" }));
   expect(scrolled).not.toHaveBeenCalled();
   await act(async () => { finish({ ok: true, json: async () => analysis }); });
@@ -60,6 +63,9 @@ it("does not scroll to stale results after the article is edited during analysis
     ? Promise.resolve({ ok: true, json: async () => [] })
     : new Promise((resolve) => { finish = resolve; })));
   render(<App />);
+  fireEvent.change(screen.getByPlaceholderText("Paste article text here..."), {
+    target: { value: "The council announced a vote." },
+  });
   fireEvent.click(screen.getByRole("button", { name: "Analyze Bias" }));
   fireEvent.change(screen.getByPlaceholderText("Paste article text here..."), { target: { value: "A different article." } });
   await act(async () => { finish({ ok: true, json: async () => analysis }); });

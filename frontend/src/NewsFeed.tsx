@@ -61,6 +61,40 @@ function StoryImage({ url }: { url: string }) {
   );
 }
 
+function SkeletonStoryCard({ compact }: { compact?: boolean }) {
+  return (
+    <article
+      aria-busy="true"
+      aria-label="Loading news story"
+      className="newsfeed-story-card flex flex-col rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden"
+    >
+      <div className="newsfeed-story-image w-full h-32 skeleton-shimmer" />
+      <div className={`newsfeed-story-body flex flex-col flex-1 min-w-0 ${compact ? "gap-2.5 p-3.5" : "gap-3 p-5"}`}>
+        <div className="flex justify-between items-center">
+          <div className="h-3 w-16 rounded skeleton-shimmer" />
+          <div className="h-3 w-12 rounded skeleton-shimmer" />
+        </div>
+        <div className="flex flex-col gap-1.5 mt-0.5">
+          <div className="h-4 w-11/12 rounded skeleton-shimmer" />
+          <div className="h-4 w-3/4 rounded skeleton-shimmer" />
+        </div>
+        <div className="flex items-center gap-2 mt-1">
+          <div className="h-3 w-20 rounded skeleton-shimmer" />
+          <div className="h-3 w-16 rounded skeleton-shimmer" />
+        </div>
+        <div className="flex flex-col gap-1.5 mt-1">
+          <div className="h-3 w-full rounded skeleton-shimmer" />
+          <div className="h-3 w-2/3 rounded skeleton-shimmer" />
+        </div>
+        <div className="mt-auto pt-2.5 border-t border-slate-100 dark:border-slate-800 flex justify-between items-center">
+          <div className="h-4 w-20 rounded skeleton-shimmer" />
+          <div className="h-4 w-12 rounded skeleton-shimmer" />
+        </div>
+      </div>
+    </article>
+  );
+}
+
 function StoryCard({
   story,
   selected,
@@ -539,25 +573,16 @@ export default function NewsFeed({
       )}
       <p aria-live="polite" className="shrink-0 text-[11px] text-slate-400 dark:text-slate-500">
         {isLoading && stories.length === 0
-          ? "Loading live stories..."
+          ? "Fetching live news stories..."
+          : isLoading
+          ? `Streaming live stories (${filtered.length} loaded)...`
           : compact
           ? `${filtered.length} ${filtered.length === 1 ? "story" : "stories"}`
           : `Showing ${Math.min(limit, filtered.length)} of ${filtered.length} ${
               filtered.length === 1 ? "story" : "stories"
             }`}
       </p>
-      {isLoading && stories.length === 0 ? (
-        <div
-          className={`rounded-xl border border-dashed border-slate-300 dark:border-slate-700 text-center flex flex-col items-center justify-center ${
-            compact ? "flex-1 min-h-0 py-6" : "py-12"
-          }`}
-        >
-          <RotateCw className="h-5 w-5 animate-spin text-indigo-600 dark:text-indigo-400 mb-2" />
-          <p className="text-xs text-slate-500 dark:text-slate-400">
-            Fetching live news stories...
-          </p>
-        </div>
-      ) : filtered.length ? (
+      {filtered.length > 0 || isLoading ? (
         <div
           ref={listRef}
           role={compact ? "region" : undefined}
@@ -579,6 +604,13 @@ export default function NewsFeed({
               isExtracting={loadingStoryId === story.id}
             />
           ))}
+          {isLoading && (
+            <>
+              <SkeletonStoryCard compact={compact} />
+              <SkeletonStoryCard compact={compact} />
+              {filtered.length === 0 && <SkeletonStoryCard compact={compact} />}
+            </>
+          )}
         </div>
       ) : (
         <div
