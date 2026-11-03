@@ -27,7 +27,18 @@ def get_openai_client(api_key=None, base_url=None, model=None):
     from openai import OpenAI
     url = base_url or os.getenv("OPENAI_BASE_URL")
     client = OpenAI(api_key=key, base_url=url) if url else OpenAI(api_key=key)
-    client.default_model = model or os.getenv("OPENAI_MODEL") or "gpt-5-mini"
+    default_model = model
+    if not default_model:
+        try:
+            from newsbias.config import get_config
+            target = get_config().get_model_target("default")
+            if hasattr(target, "primary_model"):
+                default_model = target.primary_model.model
+            elif hasattr(target, "model"):
+                default_model = target.model
+        except Exception:
+            pass
+    client.default_model = default_model or os.getenv("OPENAI_MODEL") or "gpt-4o-mini"
     return client
 
 

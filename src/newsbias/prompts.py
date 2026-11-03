@@ -56,34 +56,63 @@ class RenderedPrompt:
         self.metadata = metadata or {}
         self.raw_rendered = raw_rendered
 
-    def complete(self, client=None, model: Optional[str] = None) -> str:
-        """Call the OpenAI chat completions endpoint."""
-        c = client or get_openai_client()
-        target_model = model or getattr(c, "default_model", None) or "gpt-5-mini"
+    def complete(
+        self,
+        client=None,
+        model: Optional[str] = None,
+        config: Optional[Any] = None,
+        task: Optional[str] = None,
+    ) -> str:
+        """Call the OpenAI chat completions endpoint using ModelConfig, FallbackChain, or legacy client."""
+        # 1. If an explicit/mock client was passed, preserve direct client execution
+        if client is not None:
+            c = client
+            target_model = model or getattr(c, "default_model", None) or "gpt-5-mini"
 
-        # Configure completion tokens & reasoning effort for reasoning models
-        kwargs: dict[str, Any] = {}
-        if target_model.startswith(("gpt-5", "gpt-6", "o1", "o3", "o4")):
-            kwargs["max_completion_tokens"] = 4096
-            kwargs["reasoning_effort"] = "low"
+            kwargs: dict[str, Any] = {}
+            if target_model.startswith(("gpt-5", "gpt-6", "o1", "o3", "o4")):
+                kwargs["max_completion_tokens"] = 4096
+                kwargs["reasoning_effort"] = "low"
+            else:
+                kwargs["max_tokens"] = 4096
+
+            resp = c.chat.completions.create(
+                model=target_model,
+                messages=[
+                    {"role": "system", "content": self.system},
+                    {"role": "user", "content": self.user},
+                ],
+                **kwargs,
+            )
+            return resp.choices[0].message.content or ""
+
+        # 2. Config / Task based execution with FallbackChain support
+        from newsbias.config import FallbackChain, ModelConfig, get_config
+
+        if config is not None:
+            target = config
+        elif model is not None:
+            target = ModelConfig(model=model)
         else:
-            kwargs["max_tokens"] = 4096
+            target = get_config().get_model_target(task or "arbiter")
 
-        resp = c.chat.completions.create(
-            model=target_model,
-            messages=[
-                {"role": "system", "content": self.system},
-                {"role": "user", "content": self.user},
-            ],
-            **kwargs,
-        )
-        return resp.choices[0].message.content or ""
+        messages = []
+        if self.system:
+            messages.append({"role": "system", "content": self.system})
+        if self.user:
+            messages.append({"role": "user", "content": self.user})
+
+        return target.complete(messages)
 
     def complete_and_parse_json(
-        self, client=None, model: Optional[str] = None
+        self,
+        client=None,
+        model: Optional[str] = None,
+        config: Optional[Any] = None,
+        task: Optional[str] = None,
     ) -> dict[str, Any]:
         """Execute completion and parse JSON from the response."""
-        content = self.complete(client=client, model=model)
+        content = self.complete(client=client, model=model, config=config, task=task)
         return extract_json_payload(content)
 
     def __str__(self) -> str:

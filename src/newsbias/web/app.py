@@ -436,17 +436,21 @@ async def analyze_bias_tribunal(req: AnalyzeRequest) -> dict[str, Any]:
 
     # 3. Isolated Zero-Shot LLM Specialist
     client = None
-    try:
-        client = get_openai_client()
-    except Exception:
-        pass
+    if not req.use_mock:
+        try:
+            client = get_openai_client()
+        except Exception:
+            pass
 
     isolated_llm: dict[str, Any] = {}
     if client:
         try:
             zs_prompt = JinjaPrompt.load("zero_shot_bias")
             rendered_zs = zs_prompt.render(title=title, content=text, language=language.to_dict())
-            isolated_llm = rendered_zs.complete_and_parse_json(client=client)
+            is_mock_client = not hasattr(client, "default_model") or type(client).__name__ == "SimpleNamespace"
+            isolated_llm = rendered_zs.complete_and_parse_json(
+                client=client if is_mock_client else None, task="isolated_llm",
+            )
         except Exception as e:
             logger.warning("Isolated LLM failed: %s", e)
 
@@ -485,7 +489,10 @@ async def analyze_bias_tribunal(req: AnalyzeRequest) -> dict[str, Any]:
                 isolated_llm_specialist=isolated_llm,
                 language=language.to_dict(),
             )
-            arbiter_output = rendered_arb.complete_and_parse_json(client=client)
+            is_mock_client = not hasattr(client, "default_model") or type(client).__name__ == "SimpleNamespace"
+            arbiter_output = rendered_arb.complete_and_parse_json(
+                client=client if is_mock_client else None, task="arbiter",
+            )
         except Exception as e:
             logger.warning("Arbiter LLM failed: %s", e)
 
@@ -563,9 +570,14 @@ async def suggest_rewrite(req: RewriteRequest) -> dict[str, Any]:
                 detected_leaning=req.detected_leaning,
                 key_findings=req.key_findings,
             )
-            rewrite_output = rendered.complete_and_parse_json(client=client)
+            is_mock_client = not hasattr(client, "default_model") or type(client).__name__ == "SimpleNamespace"
+            rewrite_output = rendered.complete_and_parse_json(
+                client=client if is_mock_client else None, task="neutral_rewrite",
+            )
             if not rewrite_output or "rewritten_text" not in rewrite_output:
-                raw = rendered.complete(client=client)
+                raw = rendered.complete(
+                    client=client if is_mock_client else None, task="neutral_rewrite",
+                )
                 rewrite_output = extract_json_payload(raw)
         except Exception as e:
             logger.error("Rewrite error: %s", e)

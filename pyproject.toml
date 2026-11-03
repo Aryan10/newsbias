@@ -35,6 +35,9 @@ dev = ["pytest>=8,<10", "ruff>=0.9,<1"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+  "integration: mark test as integration test requiring external live API credentials",
+]
 
 [tool.ruff]
 target-version = "py311"

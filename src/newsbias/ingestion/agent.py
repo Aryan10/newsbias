@@ -15,7 +15,7 @@ def select_article_blocks(
             title_hint=title_hint,
             blocks=[{"id": block.id, "text": block.text} for block in blocks],
         )
-        result = rendered.complete_and_parse_json(client=client)
+        result = rendered.complete_and_parse_json(client=client, task="article_extraction")
         return BlockSelection.model_validate(result)
     except ValidationError as error:
         raise ExtractionError(
